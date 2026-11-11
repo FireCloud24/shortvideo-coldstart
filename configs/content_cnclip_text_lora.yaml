@@ -1,0 +1,4 @@
+name: content_cnclip_text_lora
+model:
+  kind: sasrec_content
+  features: [cnclip_text_lora]
