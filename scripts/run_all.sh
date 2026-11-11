@@ -8,6 +8,7 @@
 # Assumes scripts/download.py has already been run.
 
 SEEDS="${SEEDS:-0 1 2}"
+export PYTHONUNBUFFERED=1  # so progress reaches the log file line by line
 
 step() {
   echo
