@@ -71,6 +71,12 @@ def test_scatter_and_batching():
     assert out[0].tolist() == out[6].tolist() == [0, 0]
 
 
+def as_tensor(features):
+    """Older transformers return the projected features as a tensor; newer ones
+    wrap them in an output object whose ``pooler_output`` holds the same thing."""
+    return features if isinstance(features, torch.Tensor) else features.pooler_output
+
+
 def test_cnclip_encoder_matches_the_library_and_passes_checks(tiny_cnclip, tmp_path):
     from PIL import Image
 
@@ -81,7 +87,7 @@ def test_cnclip_encoder_matches_the_library_and_passes_checks(tiny_cnclip, tmp_p
     text_vecs = enc.encode_texts(texts)
     tok = enc.tokenize(texts)
     with torch.no_grad():
-        reference = model.get_text_features(input_ids=tok["input_ids"], attention_mask=tok["attention_mask"])
+        reference = as_tensor(model.get_text_features(input_ids=tok["input_ids"], attention_mask=tok["attention_mask"]))
     assert np.allclose(text_vecs, reference.numpy(), atol=1e-5)
 
     rng = np.random.default_rng(0)
@@ -93,7 +99,7 @@ def test_cnclip_encoder_matches_the_library_and_passes_checks(tiny_cnclip, tmp_p
     image_vecs = enc.encode_images(paths)
     pixels = image_processor(images=[F.open_image(p) for p in paths], return_tensors="pt")["pixel_values"]
     with torch.no_grad():
-        reference = model.get_image_features(pixel_values=pixels)
+        reference = as_tensor(model.get_image_features(pixel_values=pixels))
     assert np.allclose(image_vecs, reference.numpy(), atol=1e-5)
 
     for vecs in (text_vecs, image_vecs):

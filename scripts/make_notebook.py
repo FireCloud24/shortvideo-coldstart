@@ -20,6 +20,8 @@ CELLS = [
              "    !git clone -q $REPO_URL\n"
              "%cd shortvideo-coldstart\n"
              "!pip install -q -r requirements.txt\n"
+             "# Colab ships an old torchao that makes peft refuse to import; this project does not use torchao.\n"
+             "!pip uninstall -y -q torchao\n"
              "import torch; print(torch.__version__, torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"),
     ("md", "## 1. Tests"),
     ("code", "!python -m pytest -q"),
