@@ -1,0 +1,4 @@
+name: content_qwen_vl
+model:
+  kind: sasrec_content
+  features: [qwen_vl]

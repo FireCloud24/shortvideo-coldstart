@@ -1,0 +1,4 @@
+name: content_cnclip_image
+model:
+  kind: sasrec_content
+  features: [cnclip_image]

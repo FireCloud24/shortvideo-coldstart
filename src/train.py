@@ -25,6 +25,7 @@ import torch
 import torch.nn.functional as F
 
 from .data import PAD, EvalSet, Split, build_split, load_interactions, pad_left, training_arrays
+from .features import load_feature_table
 from .metrics import summarise, target_ranks
 from .models import Popularity, build_model
 
@@ -158,6 +159,8 @@ def run(cfg: dict, seed: int, split: Split | None = None, features=None, log=pri
                             cfg["data"]["min_warm_len"])
     max_len, ks, bs = cfg["data"]["max_len"], tuple(cfg["eval"]["ks"]), cfg["eval"]["batch_size"]
 
+    if features is None and cfg["model"]["features"]:
+        features = load_feature_table(cfg["data"]["features_dir"], cfg["model"]["features"], split.item_ids)
     model = build_model(cfg, split, features).to(device)
     start = time.time()
     if isinstance(model, Popularity):

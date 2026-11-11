@@ -4,7 +4,7 @@ SASRec is written so that *where item vectors come from* is a separate module
 (an "item table"). The sequence model only ever sees a table of shape
 [n_items + 1, dim] (row 0 is padding): it looks up the user's history in it and
 scores every item by a dot product with it. Swapping the table swaps the
-experiment: learned IDs here, frozen content features later.
+experiment: learned IDs, frozen content features, or a gated sum of both.
 """
 from __future__ import annotations
 
@@ -46,6 +46,64 @@ class IdItems(nn.Module):
 
     def forward(self) -> torch.Tensor:
         return self.emb.weight
+
+
+def _zero_padding_row(table: torch.Tensor) -> torch.Tensor:
+    mask = torch.zeros(table.shape[0], 1, dtype=torch.bool, device=table.device)
+    mask[PAD] = True
+    return table.masked_fill(mask, 0.0)
+
+
+class ContentItems(nn.Module):
+    """Item vector = small trained projection of a frozen content feature.
+
+    The features are a fixed buffer (never updated). Only the projection is
+    trained, on warm items; a cold item gets its vector the same way, from its
+    own cover/title features, with no ID and no history needed.
+    """
+
+    def __init__(self, features: torch.Tensor, dim: int, dropout: float = 0.2):
+        super().__init__()
+        self.register_buffer("features", features.float(), persistent=False)
+        self.proj = nn.Sequential(
+            nn.Linear(features.shape[1], 4 * dim), nn.GELU(), nn.Dropout(dropout), nn.Linear(4 * dim, dim)
+        )
+
+    def forward(self) -> torch.Tensor:
+        return _zero_padding_row(self.proj(self.features))
+
+
+class IdContentItems(nn.Module):
+    """Item vector = content vector + gate * ID vector (a gated sum).
+
+    The gate is a per-dimension sigmoid computed from both vectors. Two things
+    make this usable for cold items:
+
+    * ``is_cold`` items have no trained ID, so their ID part is always dropped
+      and they fall back to pure content. Knowing an item is new is legitimate
+      at serving time: it is exactly the items with no interactions yet.
+    * In training, each warm item's ID is hidden with probability ``id_dropout``
+      so the sequence model also learns to work from content alone.
+    """
+
+    def __init__(self, features: torch.Tensor, n_items: int, dim: int, is_cold: torch.Tensor,
+                 id_dropout: float = 0.3, dropout: float = 0.2):
+        super().__init__()
+        self.content = ContentItems(features, dim, dropout)
+        self.ids = IdItems(n_items, dim)
+        self.gate = nn.Linear(2 * dim, dim)
+        self.id_dropout = id_dropout
+        self.register_buffer("is_cold", is_cold.bool(), persistent=False)
+
+    def forward(self) -> torch.Tensor:
+        content = self.content()
+        ids = self.ids()
+        keep = ~self.is_cold
+        if self.training and self.id_dropout > 0:
+            keep = keep & (torch.rand(keep.shape, device=keep.device) >= self.id_dropout)
+        gate = torch.sigmoid(self.gate(torch.cat([ids, content], dim=1)))
+        table = content + keep.unsqueeze(1).to(ids.dtype) * gate * ids
+        return _zero_padding_row(table)
 
 
 class SASRec(nn.Module):
@@ -103,6 +161,16 @@ def build_model(cfg: dict, split, features: torch.Tensor | None = None) -> nn.Mo
         return Popularity(split.n_items).fit(split.train_seqs)
     if kind == "sasrec_id":
         items = IdItems(split.n_items, m["dim"])
+    elif kind in ("sasrec_content", "sasrec_id_content"):
+        if features is None:
+            raise ValueError(f"{kind} needs content features (model.features in the config)")
+        if features.shape[0] != split.n_items + 1:
+            raise ValueError(f"features have {features.shape[0]} rows, expected {split.n_items + 1}")
+        if kind == "sasrec_content":
+            items = ContentItems(features, m["dim"], m["dropout"])
+        else:
+            items = IdContentItems(features, split.n_items, m["dim"], torch.as_tensor(split.is_cold),
+                                   m["id_dropout"], m["dropout"])
     else:
         raise ValueError(f"unknown model kind {kind!r}")
     return SASRec(items, m["dim"], cfg["data"]["max_len"], m["n_layers"], m["n_heads"], m["dropout"])
