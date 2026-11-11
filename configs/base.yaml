@@ -1,0 +1,29 @@
+# Defaults shared by every run. A run config (e.g. configs/sasrec_id.yaml) is merged on top.
+data:
+  pairs: data/raw/MicroLens-100k_pairs.csv
+  features_dir: data/features
+  cold_item_frac: 0.10   # newest 10% of items (by first interaction) are cold-start
+  min_warm_len: 3        # users need 3 warm interactions for leave-one-out
+  max_len: 20            # most recent items fed to the model (median user has 6)
+
+model:
+  kind: sasrec_id        # popularity | sasrec_id | sasrec_content | sasrec_id_content
+  features: []           # names of data/features/<name>.npy, concatenated
+  dim: 64
+  n_layers: 2
+  n_heads: 2
+  dropout: 0.2
+  id_dropout: 0.3        # sasrec_id_content only: chance of hiding an item's ID in training
+
+train:
+  epochs: 30
+  batch_size: 256
+  lr: 0.001
+  weight_decay: 0.0
+  patience: 5            # stop after this many epochs without a better validation NDCG@10
+
+eval:
+  ks: [10]
+  batch_size: 1024
+
+out_dir: results/runs

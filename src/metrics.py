@@ -47,6 +47,7 @@ def ndcg_at_k(ranks: torch.Tensor, k: int) -> float:
 def summarise(ranks: torch.Tensor, ks=(10,)) -> dict:
     out = {"n": int(ranks.numel())}
     for k in ks:
-        out[f"recall@{k}"] = recall_at_k(ranks, k)
-        out[f"ndcg@{k}"] = ndcg_at_k(ranks, k)
+        # No examples -> no number (None), rather than a NaN that looks like a result.
+        out[f"recall@{k}"] = recall_at_k(ranks, k) if ranks.numel() else None
+        out[f"ndcg@{k}"] = ndcg_at_k(ranks, k) if ranks.numel() else None
     return out
