@@ -1,0 +1,14 @@
+# Data is never committed: MicroLens forbids redistributing modified copies.
+data/
+*.npy
+*.npz
+*.pt
+*.ckpt
+checkpoints/
+
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+.ipynb_checkpoints/
+.DS_Store
