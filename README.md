@@ -1,18 +1,36 @@
 # Cold-start short-video recommendation with Chinese multimodal foundation models
 
-> **Status: all experiments run once on a free Colab T4 (code version `0daf84f`, seeds 0, 1, 2).**
-> Every number below is copied from [`results/results.md`](results/results.md) or
-> [`results/error_slices.md`](results/error_slices.md), which `scripts/report.py` generates from the
-> per-seed files in `results/runs/`.
+> **Status: the results below are from the first run (code version `0daf84f`, one free Colab T4,
+> seeds 0, 1, 2). The code has changed since and has not been re-run yet.** Every number is copied
+> from [`results/results.md`](results/results.md) or [`results/error_slices.md`](results/error_slices.md),
+> which `scripts/report.py` generates from the per-seed files in `results/runs/`.
+>
+> What changed after a review on 2026-11-12, and is **not** reflected in the numbers yet:
+> training now runs to convergence (cap of 100 epochs, not 30); a matched warm setting makes warm
+> and cold comparable; LoRA starts from a trained recommender and covers the image tower; an English
+> text encoder reads the English titles; three training-free baselines are added; a cold example's
+> candidates now exclude only the cold items the user took earlier. See
+> [Pending re-run](#pending-re-run).
 >
 > The result files record code version `0daf84f`. On 2026-11-12 the commit author name and email
 > were rewritten, which changed every commit hash; the same code is now commit `a5d00d2`. File
 > contents were not changed by the rewrite.
 
-**Short answer.** An ID-only SASRec is at chance on cold-start videos (cold NDCG@10 0.0022). Replacing
-the ID with frozen Chinese-CLIP cover-image features lifts that to 0.0499, and adding the ID back on
-top of content keeps warm accuracy (0.0512 vs 0.0500) while holding cold at 0.0453. Neither LoRA on
-the text tower nor a small adapter on image features improved cold-start results in this setup.
+**Short answer: no, not yet as well.** When a new video has to compete with established ones in a
+single feed, the best content model finds it in the top 10 for 1.56% of cold test cases (Recall@10
+0.0156, `content_cnclip_image`, "Cold vs all items"). An ID model does that for 9.02% of warm test
+cases (Recall@10 0.0902, `sasrec_id`, "Warm"). Content embeddings turn cold-start from impossible
+(an ID model scores exactly 0 in that setting) into possible, but a new video is still recommended
+far less accurately than one with history.
+
+Two things this answer does not rest on:
+
+- The higher cold number in the table (Recall@10 0.0936) ranks a cold video only among the 1,974
+  cold videos. The warm number ranks among 17,764. They are not comparable, and the first version
+  of this README was wrong to set them side by side. A warm setting with the same number of
+  candidates is now implemented and will be reported after the re-run.
+- LoRA. In the first run it did not train (see RQ3), so that run says nothing about whether
+  adapting the encoder helps.
 
 ## 1. Question
 
@@ -59,7 +77,9 @@ The split is implemented in [`src/data.py`](src/data.py) and checked by `tests/t
 ### Models
 
 All sequence models share one SASRec trunk (2 layers, 64 dimensions); only the source of the item
-vectors changes ([`src/models.py`](src/models.py)).
+vectors changes ([`src/models.py`](src/models.py)). The training loss is a full-softmax
+cross-entropy over all warm items at every position, not the binary cross-entropy with one sampled
+negative of the original SASRec paper.
 
 | Config | Item vector | Can it score a cold item? |
 |---|---|---|
@@ -77,8 +97,12 @@ removed from the candidates, ties counted against the model ([`src/metrics.py`](
 Reported as mean ± sample standard deviation over 3 seeds, in three settings:
 
 - **Warm**: warm test target ranked among all warm items.
+- **Warm, matched** (added after the first run; no numbers yet): warm test target ranked among a
+  fixed random sample of 1,974 warm items, the size of the cold set. This is the warm number that
+  can be set against **Cold**.
 - **Cold**: cold target ranked among all cold items ("which new video do we show this user?").
-- **Cold vs all items**: cold target ranked among warm and cold items together.
+- **Cold vs all items**: cold target ranked among warm and cold items together. This is the
+  realistic setting.
 
 The settings have different numbers of candidates, so models are compared within a setting.
 Model selection (early stopping) uses the warm validation set only.
@@ -132,29 +156,38 @@ Yes for cold items, at a cost on warm items.
 - **ID + content gets both:** `id_content_cnclip_image_text` matches the ID model on warm items
   (0.0512 vs 0.0500 NDCG@10) and keeps most of the cold performance (0.0453 vs 0.0499).
 - **Qwen2-VL embeddings were weaker than Chinese-CLIP here** (cold NDCG@10 0.0325 vs 0.0474 for
-  image + text) and cost 3,613 s to extract against 331 s + 57 s (timings from the embedding step's
-  `data/features/*.meta.json`, which is not committed). This tests one simple recipe
-  (mean-pooled last hidden state of the 2B model), not Qwen2-VL in general.
+  image + text) and much slower to extract. The extraction times of the first run were not saved
+  in this repository, so no figure is quoted; the re-run commits them. This tests one simple
+  recipe (mean-pooled last hidden state of the 2B model), not Qwen2-VL in general.
 - **Cold vs all items stays hard.** When cold videos compete with warm ones, the best content
   model reaches Recall@10 0.0156, and the ID + content models drop to 0.0059: their trained ID
   vectors favour warm items.
 
 ### RQ3: does adapting the encoder help?
 
-Not in this setup.
+**The first run cannot answer this.** The fine-tuning did not train, for a reason that is now
+fixed in the code but not yet re-run.
 
 | Stage | Steps | Seconds | Peak GPU MB | Trainable encoder params | First loss | Last loss |
 |---|---:|---:|---:|---:|---:|---:|
 | `cnclip_image_adapter` | 392 | 6 | 100 | 262,912 | 6.959 | 6.788 |
 | `lora_text` | 3,134 | 750 | 3935 | 294,912 | 4.929 | 4.945 |
 
-- **Text LoRA:** warm NDCG@10 rose slightly (0.0182 vs 0.0168) and cold fell slightly (0.0275 vs
-  0.0294). The fine-tuning loss did not go down over the single epoch (4.929 to 4.945), so this is
-  a result about one under-trained configuration (rank 8, learning rate 1e-4, one epoch, one seed),
-  not evidence that LoRA cannot help.
-- **Image adapter:** within noise of frozen image features (cold NDCG@10 0.0477 ± 0.0022 vs
-  0.0499 ± 0.0018), for 6 seconds of training.
-- Image-tower LoRA (`content_cnclip_image_lora`) was not run.
+- **Text LoRA did not learn.** The fine-tuning loss did not go down (4.929 to 4.945 over one
+  epoch). The recommender on top of the text tower started from random weights and shared the
+  LoRA learning rate of 1e-4, so the tower was updated through an untrained model.
+- **It made the realistic setting worse.** With the re-extracted features, cold NDCG@10 fell
+  slightly among cold items (0.0275 vs 0.0294) and Recall@10 against all items fell from 0.0112 to
+  0.0072. Warm NDCG@10 rose slightly (0.0182 vs 0.0168).
+- **The image adapter is dropped from the comparison.** It was within noise of frozen image
+  features (cold NDCG@10 0.0477 ± 0.0022 vs 0.0499 ± 0.0018), which is what one should expect: the
+  downstream model already trains a small MLP on the same features, so an adapter adds nothing.
+- **Image-tower LoRA was not run**, although the cover image is the strongest signal.
+
+What the code does now: the projection and the SASRec trunk start from the trained
+`content_cnclip_*` model, they use a learning rate of 1e-3 while the LoRA matrices use 1e-4, the
+text tower gets 3 epochs, and the image tower is fine-tuned too (batch 8, gradient checkpointing,
+a fixed step budget).
 
 ### RQ4: which cold videos still fail?
 
@@ -163,16 +196,22 @@ Cold Recall@10 for `content_cnclip_image`, pooled over seeds
 
 ![Cold Recall@10 by category, title length and platform popularity](results/error_slices.png)
 
-- **Category dominates.** Food ("Delicacy") videos reach 0.3647, games 0.1092 and daily sharing
-  0.1171, while film and television (0.0241), music (0.0237), memes (0.0146) and video clips
-  (0.0116) are barely above random. A cover frame says a lot about a dish and little about a film
-  clip or a song.
-- **Popular videos are harder.** The most-liked quartile reaches 0.0460 against 0.1757 for the
-  second quartile.
-- **Long titles are where text wins.** For titles of 21+ words, `content_cnclip_text` (0.0981)
-  beats the image model (0.0838); for 1-5 word titles it is far behind (0.0268 vs 0.0815).
-- **Qwen2-VL helps on "Video Clip"** (0.0407, and 0.0602 with the ID added, vs 0.0116), the one
-  category where it clearly beats Chinese-CLIP image features.
+Test examples per slice are in brackets (of 77,753 cold test examples).
+
+- **Results differ a lot by category.** Food ("Delicacy", 2,799 examples) reaches 0.3647, daily
+  sharing (8,924) 0.1171 and games (34,549) 0.1092, while film and television (7,951) reaches
+  0.0241, music (1,365) 0.0237, memes (1,213) 0.0146 and video clips (2,410) 0.0116. The slices
+  show where the model fails, not why. One guess is that a cover frame identifies a dish better
+  than a film clip or a song, but nothing here tests that, and the smaller categories rest on
+  about a thousand examples.
+- **The most-liked videos are the hardest, but the relation is not monotonic.** By quartile of
+  platform likes: 0.1177 (fewest likes, 11,372 examples), 0.1757 (15,230), 0.0870 (22,098) and
+  0.0460 (most likes, 29,053).
+- **For long titles the text model is ahead.** For titles of 21+ words (10,287 examples),
+  `content_cnclip_text` reaches 0.0981 against 0.0838 for the image model; for titles of 1 to 5
+  words (14,723) it is far behind (0.0268 vs 0.0815).
+- **Qwen2-VL is ahead on "Video Clip"** (0.0407, and 0.0602 with the ID added, against 0.0116), the
+  one category where it clearly beats Chinese-CLIP image features. That is 2,410 examples.
 
 ## 5. Limitations
 
@@ -180,32 +219,58 @@ Cold Recall@10 for `content_cnclip_image`, pooled over seeds
 - **Likes as implicit feedback**: an interaction is a positive signal only; there are no explicit negatives or watch times.
 - **Covers, not video**: one cover frame stands in for the whole clip.
 - **English titles into a Chinese text encoder**: MicroLens-100K provides machine-translated
-  English titles. Chinese-CLIP's text tower was trained on Chinese, so its title results are a
-  lower bound on what original Chinese titles would give.
+  English titles. Chinese-CLIP's text tower was trained on Chinese, so the title results above
+  understate what titles can do. An English CLIP text tower (`content_enclip_text`) is now in the
+  code for comparison; it has not been run yet.
+- **The split is per item, not a global time cutoff.** A warm interaction that happens after a
+  cold item first appears is still training data, so the sequence model has seen some of the
+  period it is tested on. This favours every model equally but is not what a live system sees.
+- **Items without a cover share one vector.** An item with no cover file gets an all-zero image
+  feature. The count is written by the embedding step and will be reported with the re-run.
 - **Cold items are simulated**: they are the newest items of a finished dataset. All other items'
   full histories are available, unlike a live system.
 - **No cold validation set**: hyperparameters and the stopping epoch are chosen on warm data.
 - **LoRA is fine-tuned with one seed**; the ± only covers the downstream model's seeds.
-- **Training stopped at the 30-epoch cap, not at convergence.** Every run's best validation epoch
-  was 28 to 30, so early stopping never triggered and all models, baselines included, are somewhat
-  under-trained. The cap is the same for every model, but longer training could change the gaps.
+- **The first run stopped at its 30-epoch cap, not at convergence.** Every run's best validation
+  epoch was 28 to 30, so early stopping never triggered and all models, baselines included, are
+  under-trained in the numbers above. The cap is now 100.
 - **One run of the pipeline.** Standard deviations are over 3 seeds of the downstream model only.
 - **Small models and budget**: one free Colab T4, a 64-dimensional SASRec, no hyperparameter search.
+
+## Pending re-run
+
+The numbers in section 4 come from the first version of the code. These changes are implemented
+and tested but have no results yet:
+
+| Change | Why |
+|---|---|
+| Epoch cap 100 (was 30), patience 5 | Every first-run model had its best epoch at 28 to 30, so none had converged |
+| "Warm, matched" setting | A warm number with as many candidates as the cold setting |
+| Cold candidates exclude only earlier cold items | A cold video the user takes later is a legitimate candidate |
+| LoRA starts from a trained content model, 1e-3 for the recommender, 3 epochs, image tower too | The first LoRA run did not train |
+| `content_enclip_text`, `content_cnclip_image_enclip_text` | English titles read by an English text tower |
+| `popularity_recent`, `popularity_category`, `knn_cnclip_image`, `knn_cnclip_image_text` | Baselines that need no training |
+| Paired bootstrap over test examples | Whether close results (image vs image + text, ID + content vs ID) differ by more than noise |
+| Run log and feature metadata saved under `results/` | So that every runtime and count can be traced |
+
+The re-run replaces `results/` and this README's results section. Until then, treat section 4 as
+a record of the first run.
 
 ## 6. Reproduce
 
 Open [`notebooks/colab_end_to_end.ipynb`](notebooks/colab_end_to_end.ipynb) in Colab with a T4 GPU
-and run all cells. After the download, `bash scripts/run_all.sh` runs every experiment in order
-(about 3 h 36 min on a T4 by the run log's timestamps, of which 1 h is the Qwen2-VL embedding). Or, step by step:
+and run all cells. After the download, `bash scripts/run_all.sh` runs every experiment in order.
+The run time of the current code has not been measured. Or, step by step:
 
 ```bash
 pip install -r requirements.txt
-python -m pytest                                      # 48 tests, about 30 s on CPU
+python -m pytest                                      # 63 tests, about a minute on CPU
 python scripts/download.py                            # ~710 MB into data/raw/
 python scripts/embed.py --model cnclip                # GPU
-python scripts/embed.py --model qwen                  # GPU
+python scripts/embed.py --model enclip                # GPU
 python scripts/train.py --config configs/sasrec_id.yaml --seeds 0 1 2   # repeat per config
-python scripts/finetune.py --mode lora --modality text                   # GPU
+python scripts/train.py --config configs/content_cnclip_text.yaml --seeds 0 1 2 --set train.save_model=true
+python scripts/finetune.py --mode lora --modality text --init-from checkpoints/content_cnclip_text_seed0.pt   # GPU
 python scripts/embed.py --model cnclip --what text --lora-dir checkpoints/lora_text --tag lora
 python scripts/train.py --config configs/content_cnclip_text_lora.yaml --seeds 0 1 2
 python scripts/report.py                              # writes results/results.md and the charts

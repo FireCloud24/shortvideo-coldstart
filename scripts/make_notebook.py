@@ -45,7 +45,9 @@ CELLS = [
     ("md", "## 4. Every experiment\n"
            "`scripts/run_all.sh` runs the baselines, the content models, LoRA and the report, cheapest "
            "first. The full log goes to `run_all.log`; the next cell prints its summary lines."),
-    ("code", "!SEEDS=\"{SEEDS}\" IMAGE_LORA_STEPS={IMAGE_LORA_STEPS} bash scripts/run_all.sh > run_all.log 2>&1\n"
+    ("code", "# Start from an empty results folder, so no number from an earlier code version survives.\n"
+             "!rm -rf results/runs results/finetune results/features\n"
+             "!SEEDS=\"{SEEDS}\" IMAGE_LORA_STEPS={IMAGE_LORA_STEPS} bash scripts/run_all.sh > run_all.log 2>&1\n"
              "!cp run_all.log results/run_all.log\n"
              "!grep -E '^=== |seed [0-9]+: |^!!! |^wrote |cost: ' run_all.log"),
     ("md", "## 5. Report"),
