@@ -1,0 +1,4 @@
+name: content_enclip_text
+model:
+  kind: sasrec_content
+  features: [enclip_text]

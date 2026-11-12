@@ -19,7 +19,7 @@ from src import features as F  # noqa: E402
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--model", choices=["cnclip", "qwen"], required=True)
+    p.add_argument("--model", choices=["cnclip", "enclip", "qwen"], required=True)
     p.add_argument("--what", nargs="+", choices=["image", "text"], default=["image", "text"],
                    help="cnclip only: which towers to run")
     p.add_argument("--model-name", default=None, help="Hugging Face model id (defaults per --model)")
@@ -61,6 +61,11 @@ def main(argv=None) -> int:
                 raise SystemExit(f"no covers under {raw / 'covers'}; run scripts/download.py without --skip-covers")
             vecs = F.embed_in_batches(enc.encode_images, [covers[i] for i in with_cover], bs)
             save("cnclip_image", with_cover, vecs, t0, enc.model_name, {"items_without_cover": len(missing)})
+    elif args.model == "enclip":
+        enc = F.EnClipTextEncoder(args.model_name or F.ENCLIP_DEFAULT)
+        t0 = time.time()
+        vecs = F.embed_in_batches(enc.encode_texts, [titles[i] for i in ids], args.batch_size or 128)
+        save("enclip_text", ids, vecs, t0, enc.model_name, {"title_language": "en"})
     else:
         enc = F.QwenVLEncoder(args.model_name or F.QWEN_DEFAULT)
         bs = args.batch_size or 8

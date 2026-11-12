@@ -105,3 +105,34 @@ def test_cnclip_encoder_matches_the_library_and_passes_checks(tiny_cnclip, tmp_p
     for vecs in (text_vecs, image_vecs):
         assert vecs.shape == (3, 24)
         assert F.check_features(F.scatter_rows([1, 2, 3], vecs, 4), 4)["zero_rows"] == 0
+
+
+def test_english_clip_text_encoder_returns_one_projected_vector_per_title():
+    transformers = pytest.importorskip("transformers")
+    from transformers import CLIPConfig, CLIPModel
+
+    from src.features import EnClipTextEncoder
+
+    torch.manual_seed(0)
+    config = CLIPConfig(
+        text_config=dict(vocab_size=20, hidden_size=32, num_hidden_layers=2, num_attention_heads=2,
+                         intermediate_size=64, max_position_embeddings=16, eos_token_id=19, bos_token_id=18,
+                         pad_token_id=0),
+        vision_config=dict(image_size=32, patch_size=16, hidden_size=32, num_hidden_layers=1,
+                           num_attention_heads=2, intermediate_size=64),
+        projection_dim=24)
+
+    def tokenizer(texts, **_):  # word count -> that many tokens, then end-of-text, then padding
+        ids = torch.zeros(len(texts), 8, dtype=torch.long)
+        mask = torch.zeros_like(ids)
+        for row, text in enumerate(texts):
+            n = min(len(text.split()), 6)
+            ids[row, :n] = torch.arange(1, n + 1)
+            ids[row, n] = 19
+            mask[row, : n + 1] = 1
+        return {"input_ids": ids, "attention_mask": mask}
+
+    enc = EnClipTextEncoder("tiny", "cpu", model=CLIPModel(config), tokenizer=tokenizer)
+    out = enc.encode_texts(["a cat video", "dog", "a cat video"])
+    assert out.shape == (3, 24) and np.isfinite(out).all()
+    assert np.allclose(out[0], out[2]) and not np.allclose(out[0], out[1])

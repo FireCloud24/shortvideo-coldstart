@@ -20,6 +20,7 @@ import torch
 
 CNCLIP_DEFAULT = "OFA-Sys/chinese-clip-vit-base-patch16"
 QWEN_DEFAULT = "Qwen/Qwen2-VL-2B-Instruct"
+ENCLIP_DEFAULT = "openai/clip-vit-base-patch16"
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png")
 
 
@@ -154,6 +155,38 @@ class CnClipEncoder:
     def encode_images(self, paths: list[Path]) -> np.ndarray:
         pixels = self.image_processor(images=[open_image(p) for p in paths], return_tensors="pt")["pixel_values"]
         return cnclip_image_features(self.model, pixels.to(self.device)).float().cpu().numpy()
+
+
+class EnClipTextEncoder:
+    """The text tower of the original (English) CLIP.
+
+    MicroLens-100K ships its titles in English. Chinese-CLIP's text tower was trained on
+    Chinese captions, so feeding it English titles is a mismatch; this encoder reads the
+    same titles with a tower trained on English. Pass model/tokenizer to inject a small
+    offline model in tests.
+    """
+
+    def __init__(self, model_name: str = ENCLIP_DEFAULT, device: str | None = None, model=None, tokenizer=None,
+                 max_text_len: int = 77):
+        self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        self.model_name = model_name
+        if model is None:
+            from transformers import AutoTokenizer, CLIPModel
+
+            model = CLIPModel.from_pretrained(model_name)
+            tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = model.to(self.device).eval()
+        self.tokenizer = tokenizer
+        self.max_text_len = max_text_len
+
+    @torch.no_grad()
+    def encode_texts(self, texts: list[str]) -> np.ndarray:
+        tok = self.tokenizer(texts, padding=True, truncation=True, max_length=self.max_text_len,
+                             return_tensors="pt")
+        out = self.model.text_model(input_ids=tok["input_ids"].to(self.device),
+                                    attention_mask=tok["attention_mask"].to(self.device))
+        # pooler_output is the end-of-text token's state; this is what get_text_features projects.
+        return self.model.text_projection(out.pooler_output).float().cpu().numpy()
 
 
 class QwenVLEncoder:
