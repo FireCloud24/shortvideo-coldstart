@@ -4,6 +4,10 @@
 > Every number below is copied from [`results/results.md`](results/results.md) or
 > [`results/error_slices.md`](results/error_slices.md), which `scripts/report.py` generates from the
 > per-seed files in `results/runs/`.
+>
+> The result files record code version `0daf84f`. On 2026-11-12 the commit author name and email
+> were rewritten, which changed every commit hash; the same code is now commit `a5d00d2`. File
+> contents were not changed by the rewrite.
 
 **Short answer.** An ID-only SASRec is at chance on cold-start videos (cold NDCG@10 0.0022). Replacing
 the ID with frozen Chinese-CLIP cover-image features lifts that to 0.0499, and adding the ID back on
