@@ -1,13 +1,17 @@
 # Defaults shared by every run. A run config (e.g. configs/sasrec_id.yaml) is merged on top.
 data:
   pairs: data/raw/MicroLens-100k_pairs.csv
+  categories: data/raw/tags_to_summary.csv   # popularity_category only
+  recent_frac: 0.10      # popularity_recent counts the last 10% of training time
   features_dir: data/features
   cold_item_frac: 0.10   # newest 10% of items (by first interaction) are cold-start
   min_warm_len: 3        # users need 3 warm interactions for leave-one-out
   max_len: 20            # most recent items fed to the model (median user has 6)
 
 model:
-  kind: sasrec_id        # popularity | sasrec_id | sasrec_content | sasrec_id_content
+  # popularity | popularity_recent | popularity_category | content_knn |
+  # sasrec_id | sasrec_content | sasrec_id_content
+  kind: sasrec_id
   features: []           # names of data/features/<name>.npy, concatenated
   dim: 64
   n_layers: 2
@@ -16,11 +20,12 @@ model:
   id_dropout: 0.3        # sasrec_id_content only: chance of hiding an item's ID in training
 
 train:
-  epochs: 30
+  epochs: 100            # a cap; early stopping (patience) is what ends a run
   batch_size: 256
   lr: 0.001
   weight_decay: 0.0
   patience: 5            # stop after this many epochs without a better validation NDCG@10
+  save_model: false      # write checkpoints/<name>_seed<k>.pt (used to warm-start LoRA)
 
 eval:
   ks: [10]

@@ -12,7 +12,13 @@ The split, in one place (it decides every number in the README):
    interactions only contribute training data.
 3. Each removed interaction (user u, cold item c, time t) becomes one **cold
    evaluation example**: the input is u's warm interactions before t, the
-   target is c.
+   target is c. The candidates exclude what the user had already taken at time
+   t: their warm history and their *earlier* cold items. Cold items the user
+   takes later stay in the candidate list, as they would in a live system.
+
+Limitation: the cut is per item, not a global time cutoff. A warm interaction
+that happens after a cold item first appears is still training data, so the
+sequence model has seen a little of the period it is tested on.
 
 Items are re-indexed to 1..n_items (0 is padding). ``item_ids[i]`` gives the
 original MicroLens id of index i.
@@ -51,6 +57,9 @@ class Split:
     valid: EvalSet
     test: EvalSet  # warm test
     cold: EvalSet
+    # [n_items + 1] training interactions per item in the most recent `recent_frac` of
+    # training time (for the recent-popularity baseline); zeros when not computed.
+    recent_counts: np.ndarray | None = None
 
     @property
     def n_cold(self) -> int:
@@ -95,7 +104,8 @@ def choose_cold_items(df: pd.DataFrame, cold_item_frac: float) -> np.ndarray:
     return first["item"].to_numpy()[len(first) - n_cold :]
 
 
-def build_split(df: pd.DataFrame, cold_item_frac: float = 0.10, min_warm_len: int = 3) -> Split:
+def build_split(df: pd.DataFrame, cold_item_frac: float = 0.10, min_warm_len: int = 3,
+                recent_frac: float = 0.10) -> Split:
     if min_warm_len < 3:
         raise ValueError("min_warm_len must be >= 3 (train, valid and test each need an item)")
     if df.duplicated(["user", "item"]).any():
@@ -115,6 +125,7 @@ def build_split(df: pd.DataFrame, cold_item_frac: float = 0.10, min_warm_len: in
     df = df.sort_values(["user", "timestamp"], kind="stable")
 
     train_seqs: list[np.ndarray] = []
+    train_times: list[np.ndarray] = []
     valid, test, cold = EvalSet(), EvalSet(), EvalSet()
 
     for _, g in df.groupby("user", sort=True):
@@ -127,6 +138,7 @@ def build_split(df: pd.DataFrame, cold_item_frac: float = 0.10, min_warm_len: in
         if len(warm) >= min_warm_len:
             train = warm[:-2]
             train_seqs.append(train)
+            train_times.append(warm_times[:-2])
             valid.histories.append(train)
             valid.targets.append(int(warm[-2]))
             valid.excludes.append(train)
@@ -135,19 +147,29 @@ def build_split(df: pd.DataFrame, cold_item_frac: float = 0.10, min_warm_len: in
             test.excludes.append(warm[:-1])
         elif len(warm) >= 1:
             train_seqs.append(warm)
+            train_times.append(warm_times)
 
         user_cold = items[cold_mask]
-        for c, t in zip(user_cold, times[cold_mask]):
+        cold_times = times[cold_mask]
+        for c, t in zip(user_cold, cold_times):
             history = warm[warm_times < t]
             if len(history) == 0:
                 continue  # nothing to condition on
             cold.histories.append(history)
             cold.targets.append(int(c))
-            # Candidates the user already took: their warm history and their other cold items.
-            cold.excludes.append(np.concatenate([history, user_cold[user_cold != c]]))
+            # Candidates the user had already taken at time t: their warm history and
+            # their earlier cold items. Later cold items remain candidates.
+            earlier_cold = user_cold[(cold_times < t) & (user_cold != c)]
+            cold.excludes.append(np.concatenate([history, earlier_cold]))
 
     ids = np.concatenate([[-1], item_ids])
-    return Split(n_items, ids, is_cold, train_seqs, valid, test, cold)
+    recent_counts = np.zeros(n_items + 1, dtype=np.int64)
+    if train_seqs and recent_frac > 0:
+        all_items = np.concatenate(train_seqs)
+        all_times = np.concatenate(train_times)
+        cutoff = np.quantile(all_times, 1.0 - recent_frac)
+        np.add.at(recent_counts, all_items[all_times >= cutoff], 1)
+    return Split(n_items, ids, is_cold, train_seqs, valid, test, cold, recent_counts)
 
 
 def pad_left(seqs: list[np.ndarray], max_len: int) -> np.ndarray:

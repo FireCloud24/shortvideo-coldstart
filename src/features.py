@@ -36,6 +36,18 @@ def read_titles(path: str | Path) -> dict[int, str]:
     return titles
 
 
+def read_categories(path: str | Path) -> dict[int, str]:
+    """``item, category`` per line (MicroLens tags_to_summary.csv), no header."""
+    categories = {}
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        item, _, category = line.partition(",")
+        if item.strip().isdigit():
+            categories[int(item)] = category.strip()
+    return categories
+
+
 def find_covers(covers_dir: str | Path) -> dict[int, Path]:
     """Map item id -> cover path for files named ``{item}.jpg``."""
     covers = {}

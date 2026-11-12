@@ -2,11 +2,15 @@
 
 Evaluation settings (all full ranking, see src/metrics.py):
 
-* ``warm``       warm test target ranked among all warm items.
-* ``cold``       cold target ranked among all cold items: "which new video do
-                 we show this user?". This is the headline cold-start number.
-* ``cold_all``   cold target ranked among all items, warm and cold together:
-                 can a new video compete with established ones in one feed?
+* ``warm``          warm test target ranked among all warm items.
+* ``warm_matched``  warm test target ranked among a fixed random sample of warm
+                    items, as many as there are cold items. Same task size as
+                    ``cold``, so the two numbers can be compared directly.
+* ``cold``          cold target ranked among all cold items: "which new video
+                    do we show this user?".
+* ``cold_all``      cold target ranked among all items, warm and cold together:
+                    can a new video compete with established ones in one feed?
+                    This is the realistic setting and the hardest one.
 
 In every setting, items the user already interacted with are removed from the
 candidates.
@@ -25,9 +29,11 @@ import torch
 import torch.nn.functional as F
 
 from .data import PAD, EvalSet, Split, build_split, load_interactions, pad_left, training_arrays
-from .features import load_feature_table
+from .features import load_feature_table, read_categories
 from .metrics import summarise, target_ranks
-from .models import Popularity, build_model
+from .models import TRAINING_FREE, build_model
+
+MATCHED_SAMPLE_SEED = 0  # the warm_matched candidate sample is the same for every model and seed
 
 
 def set_seed(seed: int) -> None:
@@ -44,6 +50,13 @@ def candidate_mask(split: Split, setting: str, device) -> torch.Tensor:
     real[PAD] = False
     if setting == "warm":
         return real & ~is_cold
+    if setting == "warm_matched":
+        warm = np.flatnonzero(~split.is_cold[1:]) + 1
+        size = min(split.n_cold, len(warm))
+        chosen = np.random.RandomState(MATCHED_SAMPLE_SEED).choice(warm, size=size, replace=False)
+        mask = torch.zeros_like(is_cold)
+        mask[torch.as_tensor(chosen, device=device)] = True
+        return mask
     if setting == "cold":
         return is_cold
     if setting == "cold_all":
@@ -150,20 +163,30 @@ def per_item_table(evalset: EvalSet, ranks: torch.Tensor, split: Split, k: int =
     return rows
 
 
-def run(cfg: dict, seed: int, split: Split | None = None, features=None, log=print) -> dict:
+def top_k_ranks(ranks: torch.Tensor, k: int = 10) -> np.ndarray:
+    """Ranks as uint8 with everything outside the top ``k`` stored as 0. This is all
+    Recall@k and NDCG@k need, and it compresses to almost nothing."""
+    r = ranks.numpy()
+    return np.where(r <= k, r, 0).astype(np.uint8)
+
+
+def run(cfg: dict, seed: int, split: Split | None = None, features=None, log=print, categories=None) -> dict:
     """Train and evaluate one model with one seed; write results/runs/<name>/seed<seed>/."""
     set_seed(seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if split is None:
         split = build_split(load_interactions(cfg["data"]["pairs"]), cfg["data"]["cold_item_frac"],
-                            cfg["data"]["min_warm_len"])
+                            cfg["data"]["min_warm_len"], cfg["data"].get("recent_frac", 0.10))
     max_len, ks, bs = cfg["data"]["max_len"], tuple(cfg["eval"]["ks"]), cfg["eval"]["batch_size"]
 
     if features is None and cfg["model"]["features"]:
         features = load_feature_table(cfg["data"]["features_dir"], cfg["model"]["features"], split.item_ids)
-    model = build_model(cfg, split, features).to(device)
+    if categories is None and cfg["model"]["kind"] == "popularity_category":
+        by_id = read_categories(cfg["data"]["categories"])
+        categories = [None] + [by_id.get(int(i)) for i in split.item_ids[1:]]
+    model = build_model(cfg, split, features, categories).to(device)
     start = time.time()
-    if isinstance(model, Popularity):
+    if isinstance(model, TRAINING_FREE):
         training = {"history": [], "best_epoch": 0, "epochs_run": 0}
     else:
         training = fit(model, split, cfg, device, seed, log)
@@ -171,6 +194,7 @@ def run(cfg: dict, seed: int, split: Split | None = None, features=None, log=pri
 
     valid_ranks = evaluate(model, split.valid, split, "warm", max_len, device, bs)
     warm_ranks = evaluate(model, split.test, split, "warm", max_len, device, bs)
+    warm_matched_ranks = evaluate(model, split.test, split, "warm_matched", max_len, device, bs)
     cold_ranks = evaluate(model, split.cold, split, "cold", max_len, device, bs)
     cold_all_ranks = evaluate(model, split.cold, split, "cold_all", max_len, device, bs)
 
@@ -182,10 +206,12 @@ def run(cfg: dict, seed: int, split: Split | None = None, features=None, log=pri
         "metrics": {
             "valid": summarise(valid_ranks, ks),
             "warm": summarise(warm_ranks, ks),
+            "warm_matched": summarise(warm_matched_ranks, ks),
             "cold": summarise(cold_ranks, ks),
             "cold_all": summarise(cold_all_ranks, ks),
         },
         "training": training,
+        "epochs_cap": cfg["train"]["epochs"],
         "train_seconds": round(train_seconds, 1),
         "n_trainable_params": sum(p.numel() for p in model.parameters() if p.requires_grad),
         "device": str(device),
@@ -197,7 +223,16 @@ def run(cfg: dict, seed: int, split: Split | None = None, features=None, log=pri
     (out / "metrics.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     (out / "cold_by_item.json").write_text(json.dumps(per_item_table(split.cold, cold_ranks, split)),
                                            encoding="utf-8")
+    # Per-example top-10 ranks, in evaluation-set order, for paired comparisons in the report.
+    np.savez_compressed(out / "top10_ranks.npz", warm=top_k_ranks(warm_ranks),
+                        warm_matched=top_k_ranks(warm_matched_ranks), cold=top_k_ranks(cold_ranks),
+                        cold_all=top_k_ranks(cold_all_ranks))
+    if cfg["train"].get("save_model") and not isinstance(model, TRAINING_FREE):
+        ckpt = Path(cfg["train"].get("checkpoint_dir", "checkpoints"))
+        ckpt.mkdir(parents=True, exist_ok=True)
+        torch.save(model.state_dict(), ckpt / f"{cfg['name']}_seed{seed}.pt")
     m = result["metrics"]
     log(f"{cfg['name']} seed {seed}: warm ndcg@10 {m['warm'].get('ndcg@10')}  "
-        f"cold ndcg@10 {m['cold'].get('ndcg@10')}  -> {out}")
+        f"cold ndcg@10 {m['cold'].get('ndcg@10')}  best epoch {training['best_epoch']} "
+        f"of {training['epochs_run']} run (cap {cfg['train']['epochs']})  -> {out}")
     return result

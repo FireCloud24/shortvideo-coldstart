@@ -1,0 +1,4 @@
+name: knn_cnclip_image_text
+model:
+  kind: content_knn
+  features: [cnclip_image, cnclip_text]

@@ -34,6 +34,66 @@ class Popularity(nn.Module):
         return self.counts.unsqueeze(0).expand(seqs.shape[0], -1)
 
 
+class RecentPopularity(Popularity):
+    """Popularity counted only over the most recent part of training time
+    (``Split.recent_counts``). A stronger no-model baseline when tastes drift."""
+
+    def fit_counts(self, recent_counts) -> "RecentPopularity":
+        counts = torch.as_tensor(recent_counts, dtype=self.counts.dtype).clone()
+        counts[PAD] = 0
+        self.counts.copy_(counts)
+        return self
+
+
+class CategoryPopularity(Popularity):
+    """Every item is scored by the mean training count of the warm items in its category.
+
+    Needs no interactions on the item itself, so it is a cold-start baseline that uses
+    one piece of metadata and no model: "new videos in popular categories first".
+    Items with no known category get the mean over all warm items.
+    """
+
+    def fit_categories(self, train_seqs, categories, is_cold) -> "CategoryPopularity":
+        self.fit(train_seqs)
+        counts = self.counts.clone()
+        warm = ~torch.as_tensor(is_cold, dtype=torch.bool)
+        warm[PAD] = False
+        categories = list(categories)
+        overall = counts[warm].mean() if warm.any() else counts.new_zeros(())
+        totals, sizes = {}, {}
+        for i in torch.nonzero(warm).flatten().tolist():
+            c = categories[i]
+            if c is not None:
+                totals[c] = totals.get(c, 0.0) + float(counts[i])
+                sizes[c] = sizes.get(c, 0) + 1
+        scores = torch.empty_like(counts)
+        for i, c in enumerate(categories):
+            scores[i] = totals[c] / sizes[c] if c in totals else overall
+        scores[PAD] = 0
+        self.counts.copy_(scores)
+        return self
+
+
+class ContentKNN(nn.Module):
+    """Training-free content baseline: score = cosine similarity between the mean
+    content vector of the user's history and each candidate's content vector.
+
+    Nothing is learned, so any gap between this and ``sasrec_content`` is what the
+    trained projection and sequence model add on top of the raw features.
+    """
+
+    def __init__(self, features: torch.Tensor):
+        super().__init__()
+        self.register_buffer("features", nn.functional.normalize(features.float(), dim=1), persistent=False)
+
+    @torch.no_grad()
+    def score_last(self, seqs: torch.Tensor) -> torch.Tensor:
+        vectors = self.features[seqs]                                  # [B, L, d]; padding rows are zero
+        present = (seqs != PAD).unsqueeze(-1).to(vectors.dtype)
+        profile = (vectors * present).sum(1) / present.sum(1).clamp(min=1.0)
+        return nn.functional.normalize(profile, dim=1) @ self.features.T
+
+
 class IdItems(nn.Module):
     """One learned vector per item ID. A cold item's row is never trained."""
 
@@ -154,11 +214,26 @@ class SASRec(nn.Module):
         return hidden[:, -1] @ table.T
 
 
-def build_model(cfg: dict, split, features: torch.Tensor | None = None) -> nn.Module:
+TRAINING_FREE = (Popularity, ContentKNN)  # RecentPopularity and CategoryPopularity subclass Popularity
+
+
+def build_model(cfg: dict, split, features: torch.Tensor | None = None, categories=None) -> nn.Module:
     m = cfg["model"]
     kind = m["kind"]
     if kind == "popularity":
         return Popularity(split.n_items).fit(split.train_seqs)
+    if kind == "popularity_recent":
+        if split.recent_counts is None:
+            raise ValueError("popularity_recent needs Split.recent_counts (build_split computes it)")
+        return RecentPopularity(split.n_items).fit_counts(split.recent_counts)
+    if kind == "popularity_category":
+        if categories is None:
+            raise ValueError("popularity_category needs item categories (data.categories in the config)")
+        return CategoryPopularity(split.n_items).fit_categories(split.train_seqs, categories, split.is_cold)
+    if kind == "content_knn":
+        if features is None:
+            raise ValueError("content_knn needs content features (model.features in the config)")
+        return ContentKNN(features)
     if kind == "sasrec_id":
         items = IdItems(split.n_items, m["dim"])
     elif kind in ("sasrec_content", "sasrec_id_content"):

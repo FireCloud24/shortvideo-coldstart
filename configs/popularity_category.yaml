@@ -1,0 +1,3 @@
+name: popularity_category
+model:
+  kind: popularity_category

@@ -25,7 +25,7 @@ def main(argv=None) -> int:
 
     cfg = load_config(args.config, args.set)
     split = build_split(load_interactions(cfg["data"]["pairs"]), cfg["data"]["cold_item_frac"],
-                        cfg["data"]["min_warm_len"])
+                        cfg["data"]["min_warm_len"], cfg["data"].get("recent_frac", 0.10))
     print(f"split: {split.summary()}")
     for seed in args.seeds:
         run(cfg, seed, split=split)

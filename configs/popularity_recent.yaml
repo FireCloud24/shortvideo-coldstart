@@ -1,0 +1,3 @@
+name: popularity_recent
+model:
+  kind: popularity_recent
