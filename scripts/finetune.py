@@ -1,12 +1,20 @@
 """Adapt the item encoder with the recommendation loss (see src/finetune.py).
 
-LoRA on a Chinese-CLIP tower (GPU), then re-embed and train as usual:
+LoRA on a Chinese-CLIP tower (GPU), then re-embed and train as usual. The
+recommender on top of the tower starts from a trained content model, which
+scripts/train.py saves when train.save_model is set:
 
-    python scripts/finetune.py --mode lora --modality text
+    python scripts/train.py --config configs/content_cnclip_text.yaml --seeds 0 --set train.save_model=true
+    python scripts/finetune.py --mode lora --modality text \
+        --init-from checkpoints/content_cnclip_text_seed0.pt
     python scripts/embed.py --model cnclip --what text --lora-dir checkpoints/lora_text --tag lora
     python scripts/train.py --config configs/content_cnclip_text_lora.yaml --seeds 0 1 2
 
-Fallback when LoRA does not fit in memory: a 2-layer adapter on cached features.
+The image tower is the same with --modality image (batch 8, gradient checkpointing).
+
+A 2-layer adapter on cached features is kept for memory-limited machines. It is
+not part of the reported comparison: the downstream model already trains an MLP
+on the same features, so an adapter adds nothing new.
 
     python scripts/finetune.py --mode adapter --feature cnclip_image
     python scripts/train.py --config configs/content_cnclip_image.yaml --seeds 0 1 2 \
@@ -37,11 +45,16 @@ def main(argv=None) -> int:
     p.add_argument("--modality", choices=["text", "image"], default="text", help="lora: which tower to adapt")
     p.add_argument("--feature", default="cnclip_image", help="adapter: cached feature to adapt")
     p.add_argument("--model-name", default=feats.CNCLIP_DEFAULT)
-    p.add_argument("--epochs", type=int, default=1)
+    p.add_argument("--epochs", type=int, default=3)
+    p.add_argument("--init-from", default=None,
+                   help="state dict of a trained sasrec_content model to start the projection and trunk from")
+    p.add_argument("--head-lr", type=float, default=1e-3, help="learning rate of the projection and trunk")
+    p.add_argument("--no-grad-checkpointing", action="store_true",
+                   help="image LoRA: keep all activations in memory (faster, needs more GPU memory)")
     p.add_argument("--max-steps", type=int, default=None)
     p.add_argument("--batch-size", type=int, default=None)
     p.add_argument("--max-len", type=int, default=10, help="history length during fine-tuning")
-    p.add_argument("--lr", type=float, default=1e-4)
+    p.add_argument("--lr", type=float, default=1e-4, help="learning rate of the LoRA matrices / adapter")
     p.add_argument("--lora-r", type=int, default=8)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--raw-dir", default="data/raw")
@@ -59,7 +72,11 @@ def main(argv=None) -> int:
         from transformers import AutoImageProcessor, AutoTokenizer, ChineseCLIPModel
 
         name = f"lora_{args.modality}"
-        clip = ft.add_lora(ChineseCLIPModel.from_pretrained(args.model_name), args.modality, r=args.lora_r)
+        base = ChineseCLIPModel.from_pretrained(args.model_name)
+        grad_checkpointing = False
+        if args.modality == "image" and not args.no_grad_checkpointing:
+            grad_checkpointing = ft.enable_grad_checkpointing(base)
+        clip = ft.add_lora(base, args.modality, r=args.lora_r)
         if args.modality == "text":
             titles = feats.read_titles(raw / "MicroLens-100k_title_en.csv")
             by_index = [""] + [titles.get(int(i), "") for i in split.item_ids[1:]]
@@ -77,12 +94,24 @@ def main(argv=None) -> int:
         feat_dim = table.shape[1]
         batch_size = args.batch_size or DEFAULT_BATCH["adapter"]
 
-    model = ft.InBatchRecommender(encoder, feat_dim, m["dim"], args.max_len, m["n_layers"], m["n_heads"], m["dropout"])
-    print(f"{name}: fine-tuning on {device}, batch {batch_size}, history {args.max_len}")
+    # The trunk is built with the downstream model's max_len so that its weights can be loaded;
+    # fine-tuning still feeds histories of args.max_len items (they use the last positions).
+    trunk_len = d["max_len"] if args.init_from else args.max_len
+    model = ft.InBatchRecommender(encoder, feat_dim, m["dim"], trunk_len, m["n_layers"], m["n_heads"], m["dropout"])
+    if args.init_from:
+        model.load_downstream(torch.load(args.init_from, map_location="cpu"))
+        print(f"{name}: projection and trunk loaded from {args.init_from}")
+    else:
+        print(f"{name}: WARNING no --init-from; the projection and trunk start from random weights")
+    print(f"{name}: fine-tuning on {device}, batch {batch_size}, history {args.max_len}, "
+          f"lr {args.lr} (encoder) / {args.head_lr} (projection and trunk)")
     cost = ft.finetune(model, split, args.max_len, args.epochs, batch_size, args.lr, device, args.seed,
-                       max_steps=args.max_steps)
+                       max_steps=args.max_steps, head_lr=args.head_lr)
 
-    record = {"name": name, "mode": args.mode, "args": vars(args), "batch_size": batch_size, **cost}
+    record = {"name": name, "mode": args.mode, "args": vars(args), "batch_size": batch_size,
+              "warm_started": bool(args.init_from), **cost}
+    if args.mode == "lora":
+        record["grad_checkpointing"] = grad_checkpointing
     if args.mode == "lora":
         out = Path(args.out_dir) / name
         clip.save_pretrained(out)  # LoRA weights only

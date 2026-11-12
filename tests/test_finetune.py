@@ -134,3 +134,62 @@ def test_in_batch_loss_matches_a_hand_built_case():
     hidden = model.trunk.encode(table[[0, 1]].unsqueeze(0), torch.zeros(1, 2, dtype=torch.bool))[0]
     expected = torch.nn.functional.cross_entropy(hidden @ table.T, torch.tensor([1, 2]))
     assert torch.allclose(loss, expected, atol=1e-6)
+
+
+def test_gradient_checkpointing_still_trains_the_image_lora(tiny_cnclip, split, tmp_path):
+    from PIL import Image
+
+    clip, _, image_processor = tiny_cnclip
+    assert ft.enable_grad_checkpointing(clip)
+    rng = np.random.default_rng(0)
+    covers = [None]
+    for i in range(1, N_ITEMS + 1):
+        path = tmp_path / f"{i}.jpg"
+        Image.fromarray(rng.integers(0, 255, (36, 36, 3), dtype=np.uint8)).save(path)
+        covers.append(path)
+    peft_clip = ft.add_lora(clip, "image", r=4, dropout=0.0)
+    model = ft.InBatchRecommender(ft.ImageItemEncoder(peft_clip, image_processor, covers), feat_dim=24, dim=16,
+                                  max_len=4, n_layers=1, dropout=0.0)
+    model.train()
+    seqs = torch.tensor([[0, 1, 2, 3], [0, 0, 4, 5]])
+    targets = torch.tensor([[0, 2, 3, 4], [0, 0, 5, 6]])
+    model.loss(seqs, targets).backward()
+    # The lora_A matrices only get a gradient through lora_B, which starts at zero, so check lora_B.
+    grads = [p.grad for n, p in peft_clip.named_parameters() if "lora_B" in n]
+    assert grads and all(g is not None for g in grads)
+    assert sum(float(g.abs().sum()) for g in grads) > 0
+
+
+def test_warm_start_copies_a_trained_content_model_and_uses_two_learning_rates(split):
+    from src.models import ContentItems, SASRec
+
+    torch.manual_seed(0)
+    # Unit-length rows, as load_feature_table produces them
+    features = torch.nn.functional.normalize(torch.randn(N_ITEMS + 1, 24), dim=1)
+    # A "trained" downstream content model with max_len 8; fine-tuning feeds histories of 4.
+    downstream = SASRec(ContentItems(features, dim=16, dropout=0.0), dim=16, max_len=8, n_layers=1, dropout=0.0)
+    state = downstream.state_dict()
+
+    model = ft.InBatchRecommender(ft.CachedItemEncoder(features), feat_dim=24, dim=16, max_len=8, n_layers=1,
+                                  dropout=0.0)
+    model.load_downstream(state)
+    assert torch.equal(model.proj[0].weight, downstream.items.proj[0].weight)
+    assert torch.equal(model.trunk.pos.weight, downstream.pos.weight)
+
+    # With the adapter at identity, the fine-tuning model scores exactly like the downstream model.
+    model.eval(), downstream.eval()
+    seqs = torch.tensor([[1, 2, 3, 4]])
+    table = model.proj(torch.nn.functional.normalize(model.item_encoder(torch.arange(N_ITEMS + 1)), dim=1))
+    hidden = model.trunk.encode(table[seqs], seqs == 0)
+    expected_hidden, expected_table = downstream(seqs)
+    assert torch.allclose(hidden, expected_hidden, atol=1e-5)
+
+    with pytest.raises(ValueError):
+        model.load_downstream({"emb.weight": torch.zeros(1)})
+
+    before = model.proj[0].weight.detach().clone()
+    cost = ft.finetune(model, split, max_len=4, epochs=2, batch_size=8, lr=1e-3, head_lr=0.0,
+                       device=torch.device("cpu"), seed=0, log=lambda *_: None)
+    assert cost["lr"] == 1e-3 and cost["head_lr"] == 0.0 and len(cost["epoch_mean_loss"]) == 2
+    assert torch.equal(model.proj[0].weight, before)                  # head learning rate 0: unchanged
+    assert model.item_encoder.adapter.net[2].weight.abs().sum() > 0   # the encoder did move

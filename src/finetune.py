@@ -14,6 +14,13 @@ item vectors produced by the encoder and must pick the next item out of all the
 items in the batch (in-batch softmax; a full softmax would need every item
 encoded on every step).
 
+The trunk and projection should start from a trained content model
+(``InBatchRecommender.load_downstream``). Starting them from random weights
+means the encoder is updated by gradients that pass through an untrained
+recommender, which is mostly noise: in the first version of this experiment the
+loss did not move (4.929 to 4.945) and the adapted features were slightly
+worse. The encoder also gets its own, smaller learning rate.
+
 Afterwards the adapted encoder embeds all items once more and the result is
 cached like any other feature (``<name>_lora`` / ``<name>_adapter``). The
 comparison with frozen features then uses the *same* downstream config and the
@@ -49,6 +56,21 @@ def add_lora(model, modality: str, r: int = 8, alpha: int = 16, dropout: float =
 
     config = LoraConfig(r=r, lora_alpha=alpha, lora_dropout=dropout, target_modules=LORA_TARGETS[modality])
     return get_peft_model(model, config)
+
+
+def enable_grad_checkpointing(model) -> bool:
+    """Trade compute for memory in the towers: activations are recomputed in the backward
+    pass. Call on the base model before ``add_lora``. Returns whether it was enabled.
+
+    ``use_reentrant=False`` matters: the pixel inputs do not require gradients, and the
+    reentrant variant would then pass no gradient to the LoRA matrices inside the tower.
+    """
+    try:
+        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+        return True
+    except Exception as error:  # an older or newer transformers without this option
+        print(f"gradient checkpointing not enabled: {error}")
+        return False
 
 
 class ResidualAdapter(nn.Module):
@@ -127,6 +149,17 @@ class InBatchRecommender(nn.Module):
                                   nn.Linear(4 * dim, dim))
         self.trunk = SASRec(nn.Identity(), dim, max_len, n_layers, n_heads, dropout)
 
+    def load_downstream(self, state: dict) -> None:
+        """Start the projection and the trunk from a trained ``sasrec_content`` model
+        (the state dict saved by ``train.save_model``). ``max_len`` must match that
+        model's; shorter histories can still be fed, they use the last positions."""
+        proj = {k[len("items.proj."):]: v for k, v in state.items() if k.startswith("items.proj.")}
+        trunk = {k: v for k, v in state.items() if not k.startswith("items.")}
+        if not proj or not trunk:
+            raise ValueError("state dict is not a sasrec_content model (no items.proj.* or trunk weights)")
+        self.proj.load_state_dict(proj)
+        self.trunk.load_state_dict(trunk)
+
     def loss(self, seqs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """seqs, targets: [B, L] item indices (PAD = 0), as produced by training_arrays."""
         both = torch.cat([seqs, targets], dim=1)
@@ -146,21 +179,31 @@ class InBatchRecommender(nn.Module):
 
 
 def finetune(model: InBatchRecommender, split: Split, max_len: int, epochs: int, batch_size: int, lr: float,
-             device, seed: int, max_steps: int | None = None, log=print, log_every: int = 50) -> dict:
-    """Train ``model`` on the warm training sequences. Returns a cost/loss log."""
+             device, seed: int, max_steps: int | None = None, log=print, log_every: int = 50,
+             head_lr: float | None = None) -> dict:
+    """Train ``model`` on the warm training sequences. Returns a cost/loss log.
+
+    ``lr`` is the encoder's learning rate (the LoRA matrices or the adapter);
+    ``head_lr`` is used for the projection and the trunk (defaults to ``lr``).
+    """
     set_seed(seed)
     model.to(device).train()
     inputs, targets = (torch.as_tensor(a) for a in training_arrays(split.train_seqs, max_len))
-    params = [p for p in model.parameters() if p.requires_grad]
-    optimizer = torch.optim.AdamW(params, lr=lr)
+    encoder_params = [p for p in model.item_encoder.parameters() if p.requires_grad]
+    encoder_ids = {id(p) for p in encoder_params}
+    head_params = [p for p in model.parameters() if p.requires_grad and id(p) not in encoder_ids]
+    params = encoder_params + head_params
+    optimizer = torch.optim.AdamW([{"params": encoder_params, "lr": lr},
+                                   {"params": head_params, "lr": head_lr if head_lr is not None else lr}])
     use_amp = device.type == "cuda"
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
     generator = torch.Generator().manual_seed(seed)
     if use_amp:
         torch.cuda.reset_peak_memory_stats(device)
 
-    losses, step, start = [], 0, time.time()
+    losses, epoch_losses, step, start = [], [], 0, time.time()
     for _ in range(epochs):
+        epoch_start = len(losses)
         order = torch.randperm(len(inputs), generator=generator)
         for b in range(0, len(order), batch_size):
             idx = order[b:b + batch_size]
@@ -176,11 +219,15 @@ def finetune(model: InBatchRecommender, split: Split, max_len: int, epochs: int,
                 log(f"  step {step}  loss {np.mean(losses[-log_every:]):.4f}  ({time.time() - start:.0f}s)")
             if max_steps is not None and step >= max_steps:
                 break
+        epoch_losses.append(float(np.mean(losses[epoch_start:])))
         if max_steps is not None and step >= max_steps:
             break
     model.eval()
     return {
         "steps": step,
+        "epoch_mean_loss": epoch_losses,
+        "lr": lr,
+        "head_lr": head_lr if head_lr is not None else lr,
         "first_loss": float(np.mean(losses[:10])) if losses else None,
         "last_loss": float(np.mean(losses[-10:])) if losses else None,
         "seconds": round(time.time() - start, 1),
