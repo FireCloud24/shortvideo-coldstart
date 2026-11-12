@@ -2,6 +2,8 @@
 data/
 *.npy
 *.npz
+# ...except the per-example top-10 ranks saved with each run (a few kB, no dataset content)
+!results/**/top10_ranks.npz
 *.pt
 *.ckpt
 checkpoints/
