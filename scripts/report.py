@@ -19,15 +19,34 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # Row order of the table; anything else found on disk is appended alphabetically.
 ORDER = [
-    "popularity", "sasrec_id",
-    "content_cnclip_image", "content_cnclip_text", "content_cnclip_image_text", "content_qwen_vl",
+    "popularity", "popularity_recent", "popularity_category", "knn_cnclip_image", "knn_cnclip_image_text",
+    "sasrec_id",
+    "content_cnclip_image", "content_cnclip_text", "content_enclip_text",
+    "content_cnclip_image_text", "content_cnclip_image_enclip_text", "content_qwen_vl",
     "id_content_cnclip_image_text", "id_content_qwen_vl",
     "content_cnclip_text_lora", "content_cnclip_image_lora",
 ]
-SETTINGS = [("warm", "Warm"), ("cold", "Cold"), ("cold_all", "Cold vs all items")]
-CANDIDATES = {"warm": "n_warm_items", "cold": "n_cold_items", "cold_all": "n_items"}
+SETTINGS = [("warm", "Warm"), ("warm_matched", "Warm, matched"), ("cold", "Cold"),
+            ("cold_all", "Cold vs all items")]
+CANDIDATES = {"warm": "n_warm_items", "warm_matched": "n_cold_items", "cold": "n_cold_items",
+              "cold_all": "n_items"}
 
-# Chart colours: validated with the dataviz palette checker (colour-blind safe, >= 3:1 on the surface).
+# (model A, model B, setting): paired bootstrap of NDCG@10(A) - NDCG@10(B) over evaluation examples.
+PAIRS = [
+    ("content_cnclip_image_text", "content_cnclip_image", "cold"),
+    ("content_cnclip_image_text", "content_cnclip_image", "cold_all"),
+    ("id_content_cnclip_image_text", "sasrec_id", "warm"),
+    ("id_content_cnclip_image_text", "content_cnclip_image_text", "cold"),
+    ("content_cnclip_image", "knn_cnclip_image", "cold"),
+    ("content_enclip_text", "content_cnclip_text", "cold"),
+    ("content_cnclip_text_lora", "content_cnclip_text", "cold"),
+    ("content_cnclip_text_lora", "content_cnclip_text", "cold_all"),
+    ("content_cnclip_image_lora", "content_cnclip_image", "cold"),
+    ("content_cnclip_image_lora", "content_cnclip_image", "cold_all"),
+]
+BOOTSTRAP_SAMPLES = 2000
+
+# Chart colours: colour-blind safe, at least 3:1 contrast on the surface colour.
 SURFACE, INK, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e4e3df"
 WARM_COLOR, COLD_COLOR = "#2a78d6", "#eb6834"
 
@@ -64,12 +83,113 @@ def fmt(values: list[float]) -> str:
 
 
 def metric(runs: list[dict], setting: str, name: str) -> list[float]:
-    return [r["metrics"][setting].get(name) for r in runs]
+    # Runs made before a setting existed simply have no number for it.
+    return [r["metrics"].get(setting, {}).get(name) for r in runs]
+
+
+# ------------------------------------------------------------------ paired comparisons
+
+def per_example_ndcg(run_dir: Path, setting: str) -> np.ndarray | None:
+    """NDCG@10 of every evaluation example, from the top-10 ranks saved by training."""
+    path = run_dir / "top10_ranks.npz"
+    if not path.exists():
+        return None
+    with np.load(path) as saved:
+        if setting not in saved:
+            return None
+        ranks = saved[setting].astype(np.float64)
+    gains = np.zeros_like(ranks)
+    np.divide(1.0, np.log2(ranks + 1.0), out=gains, where=ranks > 0)
+    return gains
+
+
+def paired_bootstrap(a: np.ndarray, b: np.ndarray, n_samples: int = BOOTSTRAP_SAMPLES, seed: int = 0) -> dict:
+    """Mean of a - b with a 95% percentile interval, resampling examples with replacement.
+
+    ``a`` and ``b`` hold one value per evaluation example, in the same order, so the
+    difference is taken example by example before resampling (a paired comparison).
+    """
+    if a.shape != b.shape:
+        raise ValueError(f"paired arrays differ in shape: {a.shape} vs {b.shape}")
+    diff = a - b
+    rng = np.random.default_rng(seed)
+    means = np.array([diff[rng.integers(0, len(diff), len(diff))].mean() for _ in range(n_samples)])
+    low, high = np.quantile(means, [0.025, 0.975])
+    return {"diff": float(diff.mean()), "low": float(low), "high": float(high), "n": int(len(diff))}
+
+
+def paired_rows(runs: dict[str, list[dict]]) -> list[dict]:
+    rows = []
+    for a, b, setting in PAIRS:
+        if a not in runs or b not in runs:
+            continue
+        by_seed_a = {r["seed"]: per_example_ndcg(r["_dir"], setting) for r in runs[a]}
+        by_seed_b = {r["seed"]: per_example_ndcg(r["_dir"], setting) for r in runs[b]}
+        seeds = sorted(s for s in by_seed_a if by_seed_a[s] is not None and by_seed_b.get(s) is not None)
+        if not seeds:
+            continue
+        # Average each example over the seeds first, so seed noise is not counted as examples.
+        mean_a = np.mean([by_seed_a[s] for s in seeds], axis=0)
+        mean_b = np.mean([by_seed_b[s] for s in seeds], axis=0)
+        rows.append({"a": a, "b": b, "setting": setting, "seeds": seeds, **paired_bootstrap(mean_a, mean_b)})
+    return rows
+
+
+def paired_markdown(rows: list[dict]) -> list[str]:
+    if not rows:
+        return []
+    labels = dict(SETTINGS)
+    lines = ["", "## Paired comparisons", "",
+             f"NDCG@10 of A minus B, per evaluation example (averaged over seeds), with a 95% bootstrap interval",
+             f"over examples ({BOOTSTRAP_SAMPLES:,} resamples). An interval that excludes 0 means the difference is",
+             "larger than the example-to-example noise. It says nothing about a different data split.", "",
+             "| A | B | Setting | Examples | A − B | 95% interval | Excludes 0 |",
+             "|---|---|---|---:|---:|---|---|"]
+    for row in rows:
+        excludes = "yes" if row["low"] > 0 or row["high"] < 0 else "no"
+        lines.append(f"| `{row['a']}` | `{row['b']}` | {labels[row['setting']]} | {row['n']:,} | "
+                     f"{row['diff']:+.4f} | {row['low']:+.4f} to {row['high']:+.4f} | {excludes} |")
+    return lines
+
+
+def training_length_markdown(runs: dict[str, list[dict]], names: list[str]) -> list[str]:
+    lines = ["", "## Training length", "",
+             "Early stopping ends a run after 5 epochs without a better validation NDCG@10. A best epoch close",
+             "to the cap would mean the run was cut off while still improving.", "",
+             "| Model | Epoch cap | Epochs run (per seed) | Best epoch (per seed) |", "|---|---:|---|---|"]
+    for name in names:
+        rs = sorted(runs[name], key=lambda r: r["seed"])
+        if not any(r.get("training", {}).get("epochs_run") for r in rs):
+            continue  # training-free baselines
+        caps = {r.get("epochs_cap") or r.get("config", {}).get("train", {}).get("epochs", "n/a") for r in rs}
+        cap = "/".join(sorted(str(c) for c in caps))
+        lines.append(f"| `{name}` | {cap} | {'/'.join(str(r['training']['epochs_run']) for r in rs)} | "
+                     f"{'/'.join(str(r['training']['best_epoch']) for r in rs)} |")
+    return lines
+
+
+def features_markdown(features_dir: Path) -> list[str]:
+    metas = sorted(features_dir.glob("*.meta.json")) if features_dir.exists() else []
+    if not metas:
+        return []
+    lines = ["", "## Content features", "",
+             "Copied from the `.meta.json` written next to each cached feature file. \"Zero rows\" are items",
+             "with no vector (for image features: no cover file); they all share the same all-zero vector.", "",
+             "| Feature | Encoder | Dimensions | Items embedded | Zero rows | Seconds |", "|---|---|---:|---:|---:|---:|"]
+    for path in metas:
+        meta = json.loads(path.read_text(encoding="utf-8"))
+        name = path.name[: -len(".meta.json")]
+        embedded = meta.get("n_items_embedded")
+        lines.append(f"| `{name}` | {meta.get('model', 'n/a')} | {meta['shape'][1]} | "
+                     f"{embedded if embedded is not None else 'n/a'} | {meta.get('zero_rows', 'n/a')} | "
+                     f"{meta.get('seconds', 'n/a')} |")
+    return lines
 
 
 # ------------------------------------------------------------------ results.md
 
-def results_markdown(runs: dict[str, list[dict]], finetune_logs: list[dict], k: int = 10) -> str:
+def results_markdown(runs: dict[str, list[dict]], finetune_logs: list[dict], k: int = 10,
+                     features_dir: Path | None = None) -> str:
     names = ordered(runs)
     splits = {json.dumps(r["split"], sort_keys=True) for rs in runs.values() for r in rs}
     split = next(iter(runs.values()))[0]["split"]
@@ -90,9 +210,11 @@ def results_markdown(runs: dict[str, list[dict]], finetune_logs: list[dict], k: 
         "",
         "## Main table",
         "",
-        "The three settings rank the target among different numbers of candidates, so compare models",
-        "**within a column group**, not warm against cold. A uniformly random ranker scores about",
-        "Recall@10 = 10 / candidates (last row).",
+        "The settings rank the target among different numbers of candidates, so compare models **within a",
+        "column group**. The one fair warm-against-cold comparison is \"Warm, matched\" against \"Cold\": both rank",
+        "the target among the same number of items (a fixed random sample of warm items, the size of the cold",
+        "set). \"Cold vs all items\" is the realistic setting: a new video competing with every established one.",
+        "A uniformly random ranker scores about Recall@10 = 10 / candidates (last row).",
         "",
         "| Model | Seeds | " + " | ".join(f"{label} R@{k} | {label} N@{k}" for _, label in SETTINGS) + " | Train s |",
         "|---|---:|" + "---:|" * (2 * len(SETTINGS) + 1),
@@ -115,6 +237,17 @@ def results_markdown(runs: dict[str, list[dict]], finetune_logs: list[dict], k: 
             peak = log["peak_gpu_mb"] if log.get("peak_gpu_mb") is not None else "n/a"
             lines.append(f"| `{log['name']}` | {log['steps']:,} | {log['seconds']:.0f} | {peak} | "
                          f"{log['n_trainable_encoder_params']:,} | {log['first_loss']:.3f} | {log['last_loss']:.3f} |")
+        lines += ["", "First and last loss are the mean of the first and last 10 steps (in-batch softmax).",
+                  "Warm-started = the recommender on top of the encoder began from a trained content model.", "",
+                  "| Stage | Warm-started | Encoder lr | Head lr | Mean loss per epoch |", "|---|---|---:|---:|---|"]
+        for log in finetune_logs:
+            per_epoch = ", ".join(f"{x:.3f}" for x in log.get("epoch_mean_loss", [])) or "n/a"
+            lines.append(f"| `{log['name']}` | {'yes' if log.get('warm_started') else 'no'} | "
+                         f"{log.get('lr', log['args']['lr'])} | {log.get('head_lr', log['args']['lr'])} | {per_epoch} |")
+    lines += training_length_markdown(runs, names)
+    lines += paired_markdown(paired_rows(runs))
+    if features_dir is not None:
+        lines += features_markdown(features_dir)
     seeds = sorted({r["seed"] for rs in runs.values() for r in rs})
     heads = sorted({str(r.get("git_head"))[:7] for rs in runs.values() for r in rs})
     lines += ["", f"Seeds: {seeds}. Code version(s) (git): {', '.join(heads)}.", ""]
@@ -310,7 +443,8 @@ def main(argv=None) -> int:
         return 1
     logs = [json.loads(path.read_text(encoding="utf-8")) for path in sorted((results / "finetune").glob("*.json"))]
 
-    (results / "results.md").write_text(results_markdown(runs, logs), encoding="utf-8")
+    (results / "results.md").write_text(results_markdown(runs, logs, features_dir=results / "features"),
+                                        encoding="utf-8")
     warm_cold_chart(runs, results / "warm_vs_cold.png")
     print(f"wrote {results / 'results.md'} and {results / 'warm_vs_cold.png'} ({len(runs)} models)")
 

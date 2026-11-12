@@ -3,6 +3,7 @@ import importlib.util
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 spec = importlib.util.spec_from_file_location("report", Path(__file__).resolve().parents[1] / "scripts" / "report.py")
@@ -17,10 +18,18 @@ def write_run(root, name, seed, warm, cold, per_item):
     out = root / "runs" / name / f"seed{seed}"
     out.mkdir(parents=True)
     metrics = {s: {"n": 5, "recall@10": v, "ndcg@10": v / 2} for s, v in
-               [("valid", warm), ("warm", warm), ("cold", cold), ("cold_all", cold / 4)]}
+               [("valid", warm), ("warm", warm), ("warm_matched", warm * 2), ("cold", cold),
+                ("cold_all", cold / 4)]}
     (out / "metrics.json").write_text(json.dumps({
         "name": name, "seed": seed, "split": SPLIT, "metrics": metrics, "train_seconds": 12.0,
+        "training": {"epochs_run": 20 + seed, "best_epoch": 15 + seed}, "epochs_cap": 100,
         "git_head": "abc1234def"}))
+    # Top-10 ranks of the 8 cold examples (0 = outside the top 10); seed and model change them.
+    cold_ranks = np.array([1, 0, 0, 2, 0, 0, 0, 0], dtype=np.uint8)
+    if name != "sasrec_id":
+        cold_ranks = np.array([1, 1, 3, 1, 0, 2, 0, 1], dtype=np.uint8)
+    np.savez_compressed(out / "top10_ranks.npz", warm=np.zeros(5, dtype=np.uint8),
+                        warm_matched=np.zeros(5, dtype=np.uint8), cold=cold_ranks, cold_all=cold_ranks)
     (out / "cold_by_item.json").write_text(json.dumps(per_item))
 
 
@@ -45,15 +54,18 @@ def test_results_table_rows_and_numbers(results):
     runs = report.load_runs(results / "runs")
     assert report.ordered(runs) == ["sasrec_id", "content_cnclip_image"]
     md = report.results_markdown(runs, [])
-    rows = [line for line in md.splitlines() if line.startswith("| `")]
+    main_table = md.split("## Main table")[1].split("## ")[0]
+    rows = [line for line in main_table.splitlines() if line.startswith("| `")]
     assert len(rows) == 2
     id_cells = [c.strip() for c in rows[0].strip("|").split("|")]
     assert id_cells[:4] == ["`sasrec_id`", "2", "0.1500 ± 0.0707", "0.0750 ± 0.0354"]
-    assert id_cells[4] == "0.0300 ± 0.0141"  # cold recall
+    assert id_cells[4] == "0.3000 ± 0.1414"  # warm, matched recall
+    assert id_cells[6] == "0.0300 ± 0.0141"  # cold recall
     header = next(line for line in md.splitlines() if line.startswith("| Model"))
     chance = next(line for line in md.splitlines() if line.startswith("| *random ranker"))
     assert header.count("|") == rows[0].count("|") == chance.count("|")
-    assert "0.1250" in chance and "0.5000" in chance and "0.1000" in chance  # 10/80, 10/20, 10/100
+    assert "0.1250" in chance and "0.1000" in chance  # 10/80 and 10/100
+    assert chance.count("0.5000") == 2                  # 10/20 for both "warm, matched" and "cold"
     assert "Warning" not in md
 
 
@@ -83,3 +95,44 @@ def test_main_writes_files_from_saved_runs_only(results, tmp_path):
     empty = tmp_path / "empty"
     empty.mkdir()
     assert report.main(["--results-dir", str(empty)]) == 1
+
+
+def test_training_length_table_shows_each_seed(results):
+    runs = report.load_runs(results / "runs")
+    md = report.results_markdown(runs, [])
+    assert "| `sasrec_id` | 100 | 20/21 | 15/16 |" in md
+    assert "| `content_cnclip_image` | 100 | 20 | 15 |" in md
+
+
+def test_paired_bootstrap_is_paired_and_reproducible():
+    rng = np.random.default_rng(0)
+    base = rng.random(500)
+    better = base + 0.05                      # every example improves by the same amount
+    out = report.paired_bootstrap(better, base)
+    assert out["diff"] == pytest.approx(0.05) and out["low"] == pytest.approx(0.05) == pytest.approx(out["high"])
+    noisy = report.paired_bootstrap(base, rng.permutation(base))   # same values, unpaired: no real difference
+    assert noisy["low"] < 0 < noisy["high"]
+    assert report.paired_bootstrap(base, better) == report.paired_bootstrap(base, better)
+    with pytest.raises(ValueError):
+        report.paired_bootstrap(base, base[:10])
+
+
+def test_paired_rows_use_the_saved_per_example_ranks(results, monkeypatch):
+    monkeypatch.setattr(report, "PAIRS", [("content_cnclip_image", "sasrec_id", "cold"),
+                                          ("content_cnclip_image", "missing_model", "cold")])
+    runs = report.load_runs(results / "runs")
+    rows = report.paired_rows(runs)
+    assert len(rows) == 1 and rows[0]["seeds"] == [0] and rows[0]["n"] == 8
+    ndcg = lambda ranks: np.mean([1 / np.log2(r + 1) if r else 0.0 for r in ranks])
+    expected = ndcg([1, 1, 3, 1, 0, 2, 0, 1]) - ndcg([1, 0, 0, 2, 0, 0, 0, 0])
+    assert rows[0]["diff"] == pytest.approx(expected)
+    assert any("| `content_cnclip_image` | `sasrec_id` | Cold | 8 |" in line for line in report.paired_markdown(rows))
+
+
+def test_feature_table_is_read_from_meta_files(results):
+    features = results / "features"
+    features.mkdir()
+    (features / "cnclip_image.meta.json").write_text(json.dumps(
+        {"model": "toy-clip", "n_items_embedded": 95, "seconds": 12.5, "shape": [101, 512], "zero_rows": 5}))
+    md = report.results_markdown(report.load_runs(results / "runs"), [], features_dir=features)
+    assert "| `cnclip_image` | toy-clip | 512 | 95 | 5 | 12.5 |" in md
