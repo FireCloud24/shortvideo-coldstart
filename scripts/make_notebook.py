@@ -43,7 +43,7 @@ CELLS = [
              "if USE_DRIVE:\n"
              "    from google.colab import drive\n"
              "    drive.mount('/content/drive')\n"
-             "    PERSIST_DIR = '/content/drive/MyDrive/shortvideo-coldstart-run'\n"
+             "    PERSIST_DIR = '/content/drive/MyDrive/shortvideo-coldstart-run2'\n"
              "print('saving to:', PERSIST_DIR or 'this session only')"),
     ("md", "## 1. Tests"),
     ("code", "!python -m pytest -q"),
