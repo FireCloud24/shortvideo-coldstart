@@ -66,6 +66,19 @@ train content_cnclip_image_text
 train content_cnclip_image_enclip_text
 train id_content_cnclip_image_text
 
+# 2b. The trade-off curve: the ID + content model at six ID dropout rates (1.0 is content only),
+#     then the popularity correction at two of them.
+for rate in 000 025 050 075 090 100; do
+  train "id_content_dropout_${rate}"
+done
+train id_content_dropout_000_popcorrect
+train id_content_dropout_050_popcorrect
+# Tables and figures so far, in case the session ends before the slow steps below finish.
+step python scripts/report.py
+step python scripts/exposure.py
+step python scripts/tradeoff.py
+step python scripts/categories.py
+
 # 3. Adaptation (RQ3): LoRA inside a tower, starting from the trained content model.
 #    The image tower is slow (every step decodes and encodes covers), so it gets a step budget.
 once checkpoints/lora_text python scripts/finetune.py --mode lora --modality text --epochs 3   --init-from checkpoints/content_cnclip_text_seed0.pt
@@ -84,6 +97,9 @@ train id_content_qwen_vl
 mkdir -p results/features
 cp data/features/*.meta.json results/features/ 2>/dev/null || echo "!!! no feature meta files to copy"
 step python scripts/report.py
+step python scripts/exposure.py
+step python scripts/tradeoff.py
+step python scripts/categories.py
 echo
 echo "=== $(date +%H:%M:%S) ALL DONE ==="
 # Keep the log with the results, so every runtime in the README can be traced.
