@@ -31,6 +31,19 @@ CELLS = [
              "# Colab ships an old torchao that makes peft refuse to import; this project does not use torchao.\n"
              "!pip uninstall -y -q torchao\n"
              "import torch; print(torch.__version__, torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"),
+    ("md", "## 0. Keep the results safe (recommended)\n"
+           "A free Colab session can end without warning, and everything on its disk is then lost. With "
+           "`USE_DRIVE = True` the run copies results, feature files and checkpoints to a folder on your "
+           "Google Drive after every step, and a later session picks up where the last one stopped. "
+           "Colab will ask you to allow access to Drive. Delete the Drive folder to start from scratch "
+           "(do this after any change to the code)."),
+    ("code", "USE_DRIVE = True\n"
+             "PERSIST_DIR = ''\n"
+             "if USE_DRIVE:\n"
+             "    from google.colab import drive\n"
+             "    drive.mount('/content/drive')\n"
+             "    PERSIST_DIR = '/content/drive/MyDrive/shortvideo-coldstart-run'\n"
+             "print('saving to:', PERSIST_DIR or 'this session only')"),
     ("md", "## 1. Tests"),
     ("code", "!python -m pytest -q"),
     ("md", "## 2. Download MicroLens-100K\nAbout 710 MB. Re-running skips files already present."),
@@ -45,9 +58,19 @@ CELLS = [
     ("md", "## 4. Every experiment\n"
            "`scripts/run_all.sh` runs the baselines, the content models, LoRA and the report, cheapest "
            "first. The full log goes to `run_all.log`; the next cell prints its summary lines."),
-    ("code", "# Start from an empty results folder, so no number from an earlier code version survives.\n"
+    ("code", "import os\n"
+             "# The repository's results/ folder holds an earlier run; remove it so no old number survives.\n"
              "!rm -rf results/runs results/finetune results/features\n"
-             "!SEEDS=\"{SEEDS}\" IMAGE_LORA_STEPS={IMAGE_LORA_STEPS} bash scripts/run_all.sh > run_all.log 2>&1\n"
+             "if PERSIST_DIR and os.path.isdir(f'{PERSIST_DIR}/results'):\n"
+             "    print('resuming from', PERSIST_DIR)\n"
+             "    !mkdir -p results data/features checkpoints\n"
+             "    !cp -r \"{PERSIST_DIR}/results/.\" results/\n"
+             "    !cp -r \"{PERSIST_DIR}/features/.\" data/features/\n"
+             "    !cp -r \"{PERSIST_DIR}/checkpoints/.\" checkpoints/\n"
+             "    !cp \"{PERSIST_DIR}/run_all.log\" run_all.log\n"
+             "    !echo \"=== resumed in a new session ===\" >> run_all.log\n"
+             "!SEEDS=\"{SEEDS}\" IMAGE_LORA_STEPS={IMAGE_LORA_STEPS} PERSIST_DIR=\"{PERSIST_DIR}\" "
+             "bash scripts/run_all.sh >> run_all.log 2>&1\n"
              "!cp run_all.log results/run_all.log\n"
              "!grep -E '^=== |seed [0-9]+: |^!!! |^wrote |cost: ' run_all.log"),
     ("md", "## 5. Report"),

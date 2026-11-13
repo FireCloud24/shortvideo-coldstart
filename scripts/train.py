@@ -21,6 +21,8 @@ def main(argv=None) -> int:
     p.add_argument("--config", required=True)
     p.add_argument("--seeds", type=int, nargs="+", default=[0])
     p.add_argument("--set", nargs="*", default=[], metavar="KEY=VALUE", help="override config values")
+    p.add_argument("--skip-existing", action="store_true",
+                   help="skip a seed whose metrics.json already exists (to resume an interrupted run)")
     args = p.parse_args(argv)
 
     cfg = load_config(args.config, args.set)
@@ -28,6 +30,10 @@ def main(argv=None) -> int:
                         cfg["data"]["min_warm_len"], cfg["data"].get("recent_frac", 0.10))
     print(f"split: {split.summary()}")
     for seed in args.seeds:
+        done = Path(cfg["out_dir"]) / cfg["name"] / f"seed{seed}" / "metrics.json"
+        if args.skip_existing and done.exists():
+            print(f"{cfg['name']} seed {seed}: already done, skipping ({done})")
+            continue
         run(cfg, seed, split=split)
     return 0
 
