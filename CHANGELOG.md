@@ -40,3 +40,25 @@ A review of the first run found:
 
 The first Colab re-run was lost when the free GPU session ended with nothing saved.
 The run script now resumes and copies results to Google Drive after every step.
+
+## 2026-11-13, later: second Colab run stopped
+
+The re-run started on a Colab T4 and was stopped after about two hours. Colab then
+ended the GPU session for usage limits.
+
+- The IDs-only model stopped early at epochs 42 to 49, as intended.
+- The cover-only and title-only models reached the 100-epoch cap with their best
+  epoch at 99 or 100. They were still improving, so 100 epochs at a learning rate of
+  0.001 is not enough for them. Those runs are discarded.
+- Timing on the T4: 8.1 s for a training epoch, 1.2 s for a validation pass. My first
+  guess, that validation was the slow part, was wrong.
+
+Changes made because of this:
+
+- The epoch cap is 300.
+- The learning rate is chosen per model family (IDs only, content only, IDs + content)
+  from 0.001, 0.003 and 0.01, by validation NDCG@10 of one representative model with
+  seed 0. One shared rate suited the ID model and starved the content models.
+- Training uses mixed precision on a GPU. The speed-up has not been measured yet.
+- The full run can be given a time limit and continues in a later session.
+- A Kaggle notebook was added, because the run does not fit in free Colab sessions.
