@@ -28,6 +28,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from .exposure import cold_slots_per_user, histogram, summarise_exposure
 from .data import PAD, EvalSet, Split, build_split, load_interactions, pad_left, training_arrays
 from .features import load_feature_table, read_categories
 from .metrics import summarise, target_ranks
@@ -198,6 +199,11 @@ def run(cfg: dict, seed: int, split: Split | None = None, features=None, log=pri
     cold_ranks = evaluate(model, split.cold, split, "cold", max_len, device, bs)
     cold_all_ranks = evaluate(model, split.cold, split, "cold_all", max_len, device, bs)
 
+    # One mixed feed per warm test user: how many of its top-k slots are new videos.
+    k_exposure = max(ks)
+    cold_slots = cold_slots_per_user(model, split.test, split, max_len, device, k_exposure, bs)
+    exposure = summarise_exposure(histogram(cold_slots, k_exposure), split.n_cold, split.n_items)
+
     result = {
         "name": cfg["name"],
         "seed": seed,
@@ -210,6 +216,7 @@ def run(cfg: dict, seed: int, split: Split | None = None, features=None, log=pri
             "cold": summarise(cold_ranks, ks),
             "cold_all": summarise(cold_all_ranks, ks),
         },
+        "exposure": exposure,
         "training": training,
         "epochs_cap": cfg["train"]["epochs"],
         "train_seconds": round(train_seconds, 1),
