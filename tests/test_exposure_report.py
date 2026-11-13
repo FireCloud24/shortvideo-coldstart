@@ -69,3 +69,38 @@ def test_runs_without_exposure_are_left_out(tmp_path):
     (out / "metrics.json").write_text(json.dumps({"name": "popularity", "seed": 0, "metrics": {}}))
     assert exposure.exposure_rows(exposure.load_runs(tmp_path / "runs")) == []
     assert exposure.main(["--results", str(tmp_path)]) == 0
+
+
+tradeoff = load_script("tradeoff")
+SWEEP = {"kind": "sasrec_id_content", "features": ["cnclip_image", "cnclip_text"]}
+
+
+def sweep_run(root, name, dropout, share_hist, warm, correction=0.0, seed=0):
+    write_run(root, name, seed, share_hist, warm,
+              {"config": {"model": {**SWEEP, "id_dropout": dropout}, "train": {"pop_correction": correction}}})
+
+
+def test_tradeoff_sorts_the_curve_and_pairs_corrected_runs(tmp_path):
+    sweep_run(tmp_path, "id_content_dropout_050", 0.5, hist(90, 10, 0), 0.08)
+    sweep_run(tmp_path, "id_content_dropout_000", 0.0, hist(100, 0, 0), 0.10)
+    sweep_run(tmp_path, "id_content_dropout_000_popcorrect", 0.0, hist(80, 20, 0), 0.09, correction=1.0)
+    write_run(tmp_path, "sasrec_id", 0, hist(100, 0, 0), 0.07,
+              {"config": {"model": {"kind": "sasrec_id", "features": [], "id_dropout": 0.3}, "train": {}}})
+    runs = tradeoff.load_runs(tmp_path / "runs")
+    points = [tradeoff.point(n, runs[n]) for n in tradeoff.ordered(runs)]
+    curve, corrected, others = tradeoff.classify(points)
+    assert [p["id_dropout"] for p in curve] == [0.0, 0.5]
+    assert [p["name"] for p in others] == ["sasrec_id"] and others[0]["id_dropout"] is None
+    (fixed, base), = corrected
+    assert fixed["name"].endswith("popcorrect") and base["name"] == "id_content_dropout_000"
+    assert abs(fixed["exposure"] - 0.02) < 1e-12 and base["exposure"] == 0.0
+
+
+def test_tradeoff_main_writes_changes_against_the_uncorrected_run(tmp_path):
+    sweep_run(tmp_path, "id_content_dropout_000", 0.0, hist(90, 10, 0), 0.10)
+    sweep_run(tmp_path, "id_content_dropout_000_popcorrect", 0.0, hist(70, 30, 0), 0.09, correction=1.0)
+    assert tradeoff.main(["--results", str(tmp_path)]) == 0
+    text = (tmp_path / "tradeoff.md").read_text(encoding="utf-8")
+    # warm 0.10 -> 0.09 is -10.0%; exposure 1.00% -> 3.00% is +2.00 points
+    assert "| -10.0% |" in text and "| +2.00 |" in text
+    assert (tmp_path / "tradeoff.png").stat().st_size > 0

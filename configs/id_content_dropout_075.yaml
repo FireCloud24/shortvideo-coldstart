@@ -1,0 +1,5 @@
+name: id_content_dropout_075
+model:
+  kind: sasrec_id_content
+  features: [cnclip_image, cnclip_text]
+  id_dropout: 0.75

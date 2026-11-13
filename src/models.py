@@ -143,7 +143,9 @@ class IdContentItems(nn.Module):
       and they fall back to pure content. Knowing an item is new is legitimate
       at serving time: it is exactly the items with no interactions yet.
     * In training, each warm item's ID is hidden with probability ``id_dropout``
-      so the sequence model also learns to work from content alone.
+      so the sequence model also learns to work from content alone. This is the
+      dial of the trade-off curve: 0 never hides an ID, and 1 hides every ID
+      always, in training and at serving, which makes this the content-only model.
     """
 
     def __init__(self, features: torch.Tensor, n_items: int, dim: int, is_cold: torch.Tensor,
@@ -159,7 +161,9 @@ class IdContentItems(nn.Module):
         content = self.content()
         ids = self.ids()
         keep = ~self.is_cold
-        if self.training and self.id_dropout > 0:
+        if self.id_dropout >= 1.0:
+            keep = torch.zeros_like(keep)  # the ID vectors are never trained, so never use them
+        elif self.training and self.id_dropout > 0:
             keep = keep & (torch.rand(keep.shape, device=keep.device) >= self.id_dropout)
         gate = torch.sigmoid(self.gate(torch.cat([ids, content], dim=1)))
         table = content + keep.unsqueeze(1).to(ids.dtype) * gate * ids

@@ -109,3 +109,30 @@ def test_run_loads_features_from_disk_and_writes_per_item_results(tmp_path):
     per_item = json.loads((out / "cold_by_item.json").read_text())
     assert {row["item"] for row in per_item} == {13, 14}
     assert sum(row["n"] for row in per_item) == 4
+
+
+def test_id_dropout_of_one_is_the_content_only_model(tmp_path):
+    cfg, split, feats = content_setup(tmp_path, "sasrec_id_content")
+    cfg["model"]["id_dropout"] = 1.0
+    model = build_model(cfg, split, feats)
+    for mode in (model.eval, model.train):
+        mode()
+        model.items.content.proj[2].p = 0.0
+        assert torch.equal(model.items(), model.items.content()), "every ID must be hidden, always"
+    # Same scores as a content-only model holding the same content weights.
+    content_cfg, _, _ = content_setup(tmp_path, "sasrec_content")
+    content_model = build_model(content_cfg, split, feats)
+    shared = {k: v for k, v in model.state_dict().items() if not k.startswith("items.")}
+    content_model.load_state_dict(shared, strict=False)  # the sequence model
+    content_model.items.load_state_dict(model.items.content.state_dict())
+    model.eval(), content_model.eval()
+    seqs = torch.tensor([[PAD, 1, 2, 3], [4, 5, 6, 7]])
+    assert torch.allclose(model.score_last(seqs), content_model.score_last(seqs), atol=1e-6)
+
+
+def test_id_dropout_of_zero_never_hides_a_warm_id(tmp_path):
+    cfg, split, feats = content_setup(tmp_path, "sasrec_id_content")
+    cfg["model"]["id_dropout"] = 0.0
+    model = build_model(cfg, split, feats).train()
+    model.items.content.proj[2].p = 0.0
+    assert torch.equal(model.items(), model.items())
