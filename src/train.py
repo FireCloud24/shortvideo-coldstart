@@ -86,8 +86,32 @@ def evaluate(model, evalset: EvalSet, split: Split, setting: str, max_len: int, 
     return torch.cat(ranks) if ranks else torch.zeros(0, dtype=torch.long)
 
 
-def train_epoch(model, inputs, targets, train_items, optimizer, batch_size, device, generator) -> float:
-    """One pass over the training windows. Loss: softmax over all warm items."""
+def popularity_log_prior(train_seqs, n_items: int) -> torch.Tensor:
+    """[n_items + 1] log of each item's share of training interactions.
+
+    Items with no training interactions (padding, cold items) get 0; they are masked
+    out of the training loss anyway.
+    """
+    counts = torch.zeros(n_items + 1, dtype=torch.float64)
+    for seq in train_seqs:
+        counts.index_add_(0, torch.as_tensor(seq, dtype=torch.long), torch.ones(len(seq), dtype=torch.float64))
+    counts[PAD] = 0
+    seen = counts > 0
+    prior = torch.zeros(n_items + 1, dtype=torch.float64)
+    prior[seen] = torch.log(counts[seen] / counts.sum())
+    return prior.float()
+
+
+def train_epoch(model, inputs, targets, train_items, optimizer, batch_size, device, generator,
+                log_prior: torch.Tensor | None = None) -> float:
+    """One pass over the training windows. Loss: softmax over all warm items.
+
+    With ``log_prior`` (already multiplied by the correction strength), the loss is
+    computed on ``score + log_prior``. The prior then explains "this video is popular",
+    so the model's own score does not have to. At serving time the prior is left out
+    (``score_last`` never sees it), which removes the popularity signal from the ranking.
+    This is the logit-adjustment / logQ idea applied to a full softmax.
+    """
     model.train()
     order = torch.randperm(len(inputs), generator=generator)
     total, count = 0.0, 0
@@ -98,6 +122,8 @@ def train_epoch(model, inputs, targets, train_items, optimizer, batch_size, devi
         hidden, table = model(seqs)
         keep = tgt != PAD
         logits = hidden[keep] @ table.T  # [positions, n_items + 1]
+        if log_prior is not None:
+            logits = logits + log_prior
         logits = logits.masked_fill(~train_items, float("-inf"))  # padding and cold items cannot be predicted
         loss = F.cross_entropy(logits, tgt[keep])
         optimizer.zero_grad(set_to_none=True)
@@ -118,10 +144,13 @@ def fit(model, split: Split, cfg: dict, device, seed: int, log=print) -> dict:
         [p for p in model.parameters() if p.requires_grad], lr=t["lr"], weight_decay=t["weight_decay"]
     )
     generator = torch.Generator().manual_seed(seed)
+    strength = float(t.get("pop_correction") or 0.0)
+    log_prior = strength * popularity_log_prior(split.train_seqs, split.n_items).to(device) if strength else None
 
     best, best_state, bad_epochs, history = -1.0, None, 0, []
     for epoch in range(1, t["epochs"] + 1):
-        loss = train_epoch(model, inputs, targets, train_items, optimizer, t["batch_size"], device, generator)
+        loss = train_epoch(model, inputs, targets, train_items, optimizer, t["batch_size"], device, generator,
+                           log_prior)
         ranks = evaluate(model, split.valid, split, "warm", max_len, device, cfg["eval"]["batch_size"])
         ndcg = summarise(ranks, (10,))["ndcg@10"]
         history.append({"epoch": epoch, "train_loss": loss, "valid_ndcg@10": ndcg})

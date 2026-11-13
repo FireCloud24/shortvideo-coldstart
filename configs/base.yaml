@@ -25,6 +25,7 @@ train:
   lr: 0.001
   weight_decay: 0.0
   patience: 5            # stop after this many epochs without a better validation NDCG@10
+  pop_correction: 0.0    # > 0: train on score + this * log(popularity share), serve on the score alone
   save_model: false      # write checkpoints/<name>_seed<k>.pt (used to warm-start LoRA)
 
 eval:
