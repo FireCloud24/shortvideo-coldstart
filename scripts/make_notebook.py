@@ -20,6 +20,7 @@ CELLS = [
            "finished runs in `results/`."),
     ("code", f"REPO_URL = \"{REPO_URL}\"  # change if your fork lives elsewhere\n"
              "SEEDS = \"0 1 2\"\n"
+             "EXTRAS = 0  # 1 also runs English CLIP titles, LoRA and Qwen2-VL (slow; not needed for the finding)\n"
              "IMAGE_LORA_STEPS = 3000  # step budget for LoRA on the image tower (the slow stage)\n\n"
              "import os\n"
              "# Absolute paths, so re-running this cell does not clone a second copy inside the first.\n"
@@ -52,7 +53,6 @@ CELLS = [
            "up in minutes rather than hours."),
     ("code", "!python scripts/embed.py --model cnclip --limit 64\n"
              "!python scripts/embed.py --model enclip --limit 64\n"
-             "!python scripts/embed.py --model qwen --limit 32\n"
              "!python scripts/train.py --config configs/sasrec_id.yaml --seeds 0 "
              "--set train.epochs=1 out_dir=results_smoke"),
     ("md", "## 4. Every experiment\n"
@@ -104,6 +104,7 @@ KAGGLE_CELLS = [
            "dataset's licence does not allow passing on modified copies."),
     ("code", f"REPO_URL = \"{REPO_URL}\"\n"
              "SEEDS = \"0 1 2\"\n"
+             "EXTRAS = 0  # 1 also runs English CLIP titles, LoRA and Qwen2-VL (slow; not needed for the finding)\n"
              "IMAGE_LORA_STEPS = 3000\n"
              "MAX_HOURS = 10  # start no new step after this; leaves time to save before the 12-hour limit\n\n"
              "import glob, os\n"
