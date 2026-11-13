@@ -69,7 +69,7 @@ CELLS = [
              "    !cp -r \"{PERSIST_DIR}/checkpoints/.\" checkpoints/\n"
              "    !cp \"{PERSIST_DIR}/run_all.log\" run_all.log\n"
              "    !echo \"=== resumed in a new session ===\" >> run_all.log\n"
-             "!SEEDS=\"{SEEDS}\" IMAGE_LORA_STEPS={IMAGE_LORA_STEPS} PERSIST_DIR=\"{PERSIST_DIR}\" "
+             "!SEEDS=\"{SEEDS}\" EXTRAS={EXTRAS} IMAGE_LORA_STEPS={IMAGE_LORA_STEPS} PERSIST_DIR=\"{PERSIST_DIR}\" "
              "bash scripts/run_all.sh >> run_all.log 2>&1\n"
              "!cp run_all.log results/run_all.log\n"
              "!grep -E '^=== |seed [0-9]+: |^!!! |^wrote |cost: ' run_all.log"),
@@ -143,7 +143,7 @@ KAGGLE_CELLS = [
              "    !cp -r $PERSIST_DIR/checkpoints/. checkpoints/\n"
              "    !cp $PERSIST_DIR/run_all.log run_all.log\n"
              "    !echo \"=== resumed in a new session ===\" >> run_all.log\n"
-             "!SEEDS=\"{SEEDS}\" IMAGE_LORA_STEPS={IMAGE_LORA_STEPS} MAX_HOURS={MAX_HOURS} "
+             "!SEEDS=\"{SEEDS}\" EXTRAS={EXTRAS} IMAGE_LORA_STEPS={IMAGE_LORA_STEPS} MAX_HOURS={MAX_HOURS} "
              "PERSIST_DIR=\"{PERSIST_DIR}\" bash scripts/run_all.sh >> run_all.log 2>&1\n"
              "!cp run_all.log results/run_all.log\n"
              "!grep -E '^=== |seed [0-9]+: |^!!! |^wrote |cost: ' run_all.log"),

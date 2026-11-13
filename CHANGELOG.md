@@ -62,3 +62,8 @@ Changes made because of this:
 - Training uses mixed precision on a GPU. The speed-up has not been measured yet.
 - The full run can be given a time limit and continues in a later session.
 - A Kaggle notebook was added, because the run does not fit in free Colab sessions.
+
+The full run was also reordered so the finding comes first: baselines, IDs only, the ID
+dropout sweep and the popularity correction, then the remaining content models. English
+CLIP titles, LoRA and Qwen2-VL are extras that run only when asked for. Seeds now train
+as separate processes at the same time on the GPU.
