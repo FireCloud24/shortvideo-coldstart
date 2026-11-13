@@ -20,9 +20,10 @@ model:
   id_dropout: 0.3        # sasrec_id_content only: chance of hiding an item's ID in training
 
 train:
-  epochs: 100            # a cap; early stopping (patience) is what ends a run
+  epochs: 300            # a cap; early stopping (patience) is what ends a run
   batch_size: 256
-  lr: 0.001
+  lr: 0.001              # the full run picks this per model family on validation (scripts/pick_lr.py)
+  amp: true              # mixed precision on a GPU (ignored on CPU)
   weight_decay: 0.0
   patience: 5            # stop after this many epochs without a better validation NDCG@10
   pop_correction: 0.0    # > 0: train on score + this * log(popularity share), serve on the score alone

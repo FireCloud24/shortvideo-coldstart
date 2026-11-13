@@ -103,7 +103,7 @@ def popularity_log_prior(train_seqs, n_items: int) -> torch.Tensor:
 
 
 def train_epoch(model, inputs, targets, train_items, optimizer, batch_size, device, generator,
-                log_prior: torch.Tensor | None = None) -> float:
+                log_prior: torch.Tensor | None = None, scaler=None) -> float:
     """One pass over the training windows. Loss: softmax over all warm items.
 
     With ``log_prior`` (already multiplied by the correction strength), the loss is
@@ -119,16 +119,25 @@ def train_epoch(model, inputs, targets, train_items, optimizer, batch_size, devi
         idx = order[start:start + batch_size]
         seqs = inputs[idx].to(device)
         tgt = targets[idx].to(device)
-        hidden, table = model(seqs)
-        keep = tgt != PAD
-        logits = hidden[keep] @ table.T  # [positions, n_items + 1]
+        # Mixed precision (``scaler`` given, GPU only): the forward pass runs in 16-bit
+        # floats where that is safe, which is faster; the loss itself is computed in 32-bit.
+        with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=scaler is not None):
+            hidden, table = model(seqs)
+            keep = tgt != PAD
+            logits = hidden[keep] @ table.T  # [positions, n_items + 1]
+        logits = logits.float()
         if log_prior is not None:
             logits = logits + log_prior
         logits = logits.masked_fill(~train_items, float("-inf"))  # padding and cold items cannot be predicted
         loss = F.cross_entropy(logits, tgt[keep])
         optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        optimizer.step()
+        if scaler is not None:
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            optimizer.step()
         total += loss.item() * int(keep.sum())
         count += int(keep.sum())
     return total / max(count, 1)
@@ -146,11 +155,13 @@ def fit(model, split: Split, cfg: dict, device, seed: int, log=print) -> dict:
     generator = torch.Generator().manual_seed(seed)
     strength = float(t.get("pop_correction") or 0.0)
     log_prior = strength * popularity_log_prior(split.train_seqs, split.n_items).to(device) if strength else None
+    use_amp = bool(t.get("amp")) and torch.device(device).type == "cuda"
+    scaler = torch.amp.GradScaler("cuda") if use_amp else None
 
     best, best_state, bad_epochs, history = -1.0, None, 0, []
     for epoch in range(1, t["epochs"] + 1):
         loss = train_epoch(model, inputs, targets, train_items, optimizer, t["batch_size"], device, generator,
-                           log_prior)
+                           log_prior, scaler)
         ranks = evaluate(model, split.valid, split, "warm", max_len, device, cfg["eval"]["batch_size"])
         ndcg = summarise(ranks, (10,))["ndcg@10"]
         history.append({"epoch": epoch, "train_loss": loss, "valid_ndcg@10": ndcg})
@@ -165,7 +176,7 @@ def fit(model, split: Split, cfg: dict, device, seed: int, log=print) -> dict:
     if best_state is not None:
         model.load_state_dict(best_state)
     best_epoch = max(history, key=lambda h: h["valid_ndcg@10"])["epoch"] if history else 0
-    return {"history": history, "best_epoch": best_epoch, "epochs_run": len(history)}
+    return {"history": history, "best_epoch": best_epoch, "epochs_run": len(history), "amp": use_amp}
 
 
 def git_head() -> str | None:
