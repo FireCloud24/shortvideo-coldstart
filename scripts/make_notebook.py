@@ -14,7 +14,7 @@ REPO_URL = "https://github.com/FireCloud24/shortvideo-coldstart.git"
 CELLS = [
     ("md", "# Cold-start short-video recommendation: end to end\n\n"
            "Runs the whole pipeline on a free Colab T4: download, tests, embeddings, baselines, all models "
-           "x 3 seeds, LoRA on both towers, report.\n\n"
+           "x 3 seeds, the tables and figures, then the vector-length test.\n\n"
            "**Runtime > Change runtime type > T4 GPU** before running. The full run takes several hours; "
            "results are written as each step finishes, so a session that is cut off still leaves the "
            "finished runs in `results/`."),
@@ -82,6 +82,14 @@ CELLS = [
              "display(Image('results/warm_vs_cold.png'))\n"
              "display(Markdown(open('results/error_slices.md').read()))\n"
              "display(Image('results/error_slices.png'))"),
+    ("md", "## 5b. Vector-length test\n"
+           "Retrains two ID + content models with their weights saved and multiplies the new videos' vectors "
+           "by a factor, with nothing retrained. About half an hour."),
+    ("code", "!bash scripts/run_scale_test.sh > scale_test.log 2>&1\n"
+             "!grep -E '^=== |as trained|^!!! |^wrote ' scale_test.log\n"
+             "from IPython.display import Markdown, Image, display\n"
+             "display(Image('results/scale_test/scale_test.png'))\n"
+             "display(Markdown(open('results/scale_test/scale_test.md').read()))"),
     ("md", "## 6. Save the results\n"
            "`results/` holds only metrics, per-example ranks, tables, charts and the run log (no dataset "
            "files), so it can be committed. Download the zip and commit it from your machine, together "
@@ -156,6 +164,14 @@ KAGGLE_CELLS = [
              "for name in ('lr_search/chosen', 'tradeoff', 'exposure', 'categories', 'results'):\n"
              "    if os.path.exists(f'results/{name}.md'):\n"
              "        display(Markdown(open(f'results/{name}.md').read()))"),
+    ("md", "## 5b. Vector-length test\n"
+           "Retrains two ID + content models with their weights saved and multiplies the new videos' vectors "
+           "by a factor, with nothing retrained. About half an hour."),
+    ("code", "!bash scripts/run_scale_test.sh > scale_test.log 2>&1\n"
+             "!grep -E '^=== |as trained|^!!! |^wrote ' scale_test.log\n"
+             "from IPython.display import Markdown, Image, display\n"
+             "display(Image('results/scale_test/scale_test.png'))\n"
+             "display(Markdown(open('results/scale_test/scale_test.md').read()))"),
     ("md", "## 6. Save the results\n"
            "`results.zip` holds only metrics, per-example ranks, tables, charts and the run log (no dataset "
            "files), so it can be committed. It appears under this version's **Output**."),
