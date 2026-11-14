@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The vector-length test: retrain two ID + content models with their weights saved,
-# then run scripts/scale_test.py on them. About half an hour on a T4.
+# and the model with no IDs, then run scripts/scale_test.py on them. About an hour on a T4.
 #
 #   bash scripts/run_scale_test.sh
 #
@@ -9,7 +9,7 @@
 # The learning rate is the one already chosen in results/lr_search.
 
 SEEDS="${SEEDS:-0 1 2}"
-MODELS="${MODELS:-id_content_dropout_000 id_content_dropout_050}"
+MODELS="${MODELS:-id_content_dropout_000 id_content_dropout_050 id_content_dropout_100}"
 export PYTHONUNBUFFERED=1
 
 [ -e data/features/cnclip_image.npy ] || python scripts/embed.py --model cnclip || exit 1

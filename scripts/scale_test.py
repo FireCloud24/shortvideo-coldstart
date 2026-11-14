@@ -15,7 +15,10 @@ lengths, then multiplies every new video's vector by a factor and re-evaluates:
   (what stretching new videos costs old ones).
 
 Factor 1 is the model as trained. "matched" is the factor that makes the mean length
-of a new video's vector equal the mean length of an old video's.
+of a new video's vector equal the mean length of an old video's. "calibrated" is the
+factor at which new videos get the same share of top-10 slots as they have of the
+catalogue; it is found on the validation users' feeds, where no test target is used,
+and then applied to the test users.
 
     python scripts/scale_test.py --models id_content_dropout_000 id_content_dropout_050
 """
@@ -66,6 +69,31 @@ def vector_lengths(model: nn.Module, is_cold: torch.Tensor) -> dict:
             "matched_factor": warm_mean / cold_mean if cold_mean > 0 else float("nan")}
 
 
+def exposure_at(model, split, evalset, factor: float, max_len: int, device, k: int = 10, batch_size: int = 1024) -> float:
+    """Share of top-k slots going to new videos for ``evalset``'s users at this factor."""
+    from src.exposure import cold_slots_per_user
+
+    scaled = ScaledCold(model, torch.as_tensor(split.is_cold), factor).to(device)
+    slots = cold_slots_per_user(scaled, evalset, split, max_len, device, k, batch_size)
+    return float(slots.mean() / k) if len(slots) else float("nan")
+
+
+def calibrate_factor(exposure_of, target: float, low: float = 0.5, high: float = 4.0, steps: int = 14) -> float:
+    """The factor at which ``exposure_of(factor)`` reaches ``target``, by bisection.
+    Exposure rises with the factor. If the target lies outside [low, high] the nearer end is returned."""
+    if exposure_of(low) >= target:
+        return low
+    if exposure_of(high) <= target:
+        return high
+    for _ in range(steps):
+        mid = (low + high) / 2
+        if exposure_of(mid) < target:
+            low = mid
+        else:
+            high = mid
+    return (low + high) / 2
+
+
 def evaluate_factor(model, split, factor: float, max_len: int, device, ks=(10,), batch_size: int = 1024) -> dict:
     from src.exposure import cold_slots_per_user, histogram, summarise_exposure
     from src.metrics import summarise
@@ -92,7 +120,11 @@ def test_one(cfg: dict, split, features, checkpoint: Path, device, factors=FACTO
     rows = [dict(evaluate_factor(model, split, f, cfg["data"]["max_len"], device), label=f"{f:g}") for f in factors]
     matched = evaluate_factor(model, split, lengths["matched_factor"], cfg["data"]["max_len"], device)
     rows.append(dict(matched, label="matched"))
-    return {"lengths": lengths, "rows": rows}
+    # Chosen on the validation users (their feeds only), reported on the test users.
+    max_len, target = cfg["data"]["max_len"], split.n_cold / split.n_items
+    factor = calibrate_factor(lambda f: exposure_at(model, split, split.valid, f, max_len, device), target)
+    rows.append(dict(evaluate_factor(model, split, factor, max_len, device), label="calibrated"))
+    return {"lengths": lengths, "rows": rows, "calibration": {"target_exposure": target, "factor": factor}}
 
 
 # ------------------------------------------------------------------ report
@@ -114,6 +146,7 @@ def markdown(results: dict, names: dict[str, str]) -> str:
              "the mean length of an old video's. Exposure: share of top-10 slots going to new videos in a mixed "
              "feed. The two Recall@10 columns rank the target among all videos, old and new. Mean ± sample "
              "standard deviation over seeds.", ""]
+    lines += side_by_side(results, names)
     for name, seeds in results.items():
         if not seeds:
             continue
@@ -132,6 +165,36 @@ def markdown(results: dict, names: dict[str, str]) -> str:
                          f"{pm([r['warm_all']['recall@10'] for r in rows])} |")
         lines.append("")
     return "\n".join(lines)
+
+
+def row_values(seeds: dict, label: str, path: tuple[str, str]) -> list[float]:
+    out = []
+    for s in seeds.values():
+        for r in s["rows"]:
+            if r["label"] == label:
+                out.append(r[path[0]][path[1]])
+    return out
+
+
+def side_by_side(results: dict, names: dict[str, str]) -> list[str]:
+    """Every model as trained and calibrated, in the same three columns, so they can be compared."""
+    usable = {n: s for n, s in results.items() if s and all("calibration" in v for v in s.values())}
+    if not usable:
+        return []
+    lines = ["## Like for like", "",
+             "Calibrated: new videos' vectors are multiplied by the factor that gives them their share of the "
+             "catalogue in the validation users' top-10 lists. The factor is found without any test target and "
+             "the numbers below are for the test users.", "",
+             "| Model | New videos' vectors | Factor | New-video exposure (%) | Recall@10, new video among all | "
+             "Recall@10, old video among all |", "|---|---|---:|---:|---:|---:|"]
+    for name, seeds in usable.items():
+        for label, shown in (("1", "as trained"), ("calibrated", "calibrated")):
+            factor = "1" if label == "1" else pm([v["calibration"]["factor"] for v in seeds.values()], digits=2)
+            lines.append(f"| {names.get(name, name)} | {shown} | {factor} | "
+                         f"{pm(row_values(seeds, label, ('exposure', 'cold_slot_share')), 100, 2)} | "
+                         f"{pm(row_values(seeds, label, ('cold_all', 'recall@10')))} | "
+                         f"{pm(row_values(seeds, label, ('warm_all', 'recall@10')))} |")
+    return lines + [""]
 
 
 def chart(results: dict, names: dict[str, str], path: Path) -> None:
@@ -169,7 +232,8 @@ def chart(results: dict, names: dict[str, str], path: Path) -> None:
 
 
 NAMES = {"id_content_dropout_000": "IDs + cover + title, ID dropout 0",
-         "id_content_dropout_050": "IDs + cover + title, ID dropout 0.5"}
+         "id_content_dropout_050": "IDs + cover + title, ID dropout 0.5",
+         "id_content_dropout_100": "Cover + title, no IDs (ID dropout 1)"}
 
 
 def main(argv=None) -> int:
@@ -195,8 +259,9 @@ def main(argv=None) -> int:
         results.setdefault(name, {})
         for seed in args.seeds:
             checkpoint = Path(args.checkpoints) / f"{name}_seed{seed}.pt"
-            if str(seed) in results[name] or not checkpoint.exists():
-                print(f"{name} seed {seed}: {'already done' if str(seed) in results[name] else 'no checkpoint'}")
+            done = "calibration" in results[name].get(str(seed), {})
+            if done or not checkpoint.exists():
+                print(f"{name} seed {seed}: {'already done' if done else 'no checkpoint'}")
                 continue
             if split is None:
                 split = build_split(load_interactions(cfg["data"]["pairs"]), cfg["data"]["cold_item_frac"],
@@ -206,7 +271,7 @@ def main(argv=None) -> int:
             saved.write_text(json.dumps(results, indent=1), encoding="utf-8")
             first, last = results[name][str(seed)]["rows"][0], results[name][str(seed)]["rows"][-1]
             print(f"{name} seed {seed}: exposure {first['exposure']['cold_slot_share']:.4f} as trained, "
-                  f"{last['exposure']['cold_slot_share']:.4f} with lengths matched "
+                  f"{last['exposure']['cold_slot_share']:.4f} calibrated on validation "
                   f"(factor {last['factor']:.2f})")
     (out / "scale_test.md").write_text(markdown(results, NAMES), encoding="utf-8")
     print(f"wrote {out / 'scale_test.md'}")

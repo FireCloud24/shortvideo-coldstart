@@ -53,3 +53,31 @@ def test_evaluation_and_report(tmp_path):
     results = {"m": {"0": {"lengths": scale_test.vector_lengths(model, torch.as_tensor(split.is_cold)), "rows": rows}}}
     text = scale_test.markdown(results, {"m": "A model"})
     assert "## A model" in text and "| 50 |" in text and "Matching factor" in text
+
+
+def test_calibration_finds_the_factor_that_hits_the_target():
+    # Exposure rises with the factor; the target 0.3 is reached at factor 2.
+    exposure = lambda f: min(1.0, 0.15 * f)
+    assert abs(scale_test.calibrate_factor(exposure, 0.3) - 2.0) < 1e-3
+    # A target the range cannot reach returns the nearer end.
+    assert scale_test.calibrate_factor(exposure, 0.01) == 0.5
+    assert scale_test.calibrate_factor(lambda f: 0.0, 0.3) == 4.0
+
+
+def test_exposure_rises_with_the_factor_and_like_for_like_table(tmp_path):
+    cfg, split, model = setup(tmp_path)
+    at = lambda f: scale_test.exposure_at(model, split, split.valid, f, cfg["data"]["max_len"], "cpu", k=3)
+    # Factor 1 is the model as trained. (Stretching only raises exposure when the new videos'
+    # best scores are positive, which holds for the trained models and not for this untrained one.)
+    as_trained = scale_test.evaluate_factor(model, split, 1.0, cfg["data"]["max_len"], "cpu", ks=(3,))
+    assert 0.0 <= at(1.0) <= 1.0 and 0.0 <= at(3.0) <= 1.0
+    assert as_trained["exposure"]["k"] == 3
+    rows = [dict(scale_test.evaluate_factor(model, split, f, cfg["data"]["max_len"], "cpu"), label=l)
+            for f, l in ((1.0, "1"), (2.0, "calibrated"))]
+    seed = {"lengths": scale_test.vector_lengths(model, torch.as_tensor(split.is_cold)), "rows": rows,
+            "calibration": {"target_exposure": 0.1, "factor": 2.0}}
+    text = scale_test.markdown({"m": {"0": seed}}, {"m": "A model"})
+    assert "## Like for like" in text and "| A model | calibrated | 2.00 |" in text
+    # Results saved before calibration existed are still reported, without the comparison table.
+    old = {"m": {"0": {"lengths": seed["lengths"], "rows": rows[:1]}}}
+    assert "## Like for like" not in scale_test.markdown(old, {"m": "A model"})
