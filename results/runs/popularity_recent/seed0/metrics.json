@@ -1,0 +1,110 @@
+{
+  "name": "popularity_recent",
+  "seed": 0,
+  "config": {
+    "data": {
+      "pairs": "data/raw/MicroLens-100k_pairs.csv",
+      "categories": "data/raw/tags_to_summary.csv",
+      "recent_frac": 0.1,
+      "features_dir": "data/features",
+      "cold_item_frac": 0.1,
+      "min_warm_len": 3,
+      "max_len": 20
+    },
+    "model": {
+      "kind": "popularity_recent",
+      "features": [],
+      "dim": 64,
+      "n_layers": 2,
+      "n_heads": 2,
+      "dropout": 0.2,
+      "id_dropout": 0.3
+    },
+    "train": {
+      "epochs": 300,
+      "batch_size": 256,
+      "lr": 0.001,
+      "amp": true,
+      "weight_decay": 0.0,
+      "patience": 5,
+      "pop_correction": 0.0,
+      "save_model": false
+    },
+    "eval": {
+      "ks": [
+        10
+      ],
+      "batch_size": 1024
+    },
+    "out_dir": "results/runs",
+    "name": "popularity_recent"
+  },
+  "split": {
+    "n_items": 19738,
+    "n_warm_items": 17764,
+    "n_cold_items": 1974,
+    "n_train_users": 99939,
+    "n_train_interactions": 444199,
+    "n_valid": 98295,
+    "n_warm_test": 98295,
+    "n_cold_test": 77753
+  },
+  "metrics": {
+    "valid": {
+      "n": 98295,
+      "recall@10": 0.008423622768197771,
+      "ndcg@10": 0.0038579038888188573
+    },
+    "warm": {
+      "n": 98295,
+      "recall@10": 0.010417620428302559,
+      "ndcg@10": 0.005360733476428804
+    },
+    "warm_matched": {
+      "n": 98295,
+      "recall@10": 0.05072485884327789,
+      "ndcg@10": 0.021868298466023475
+    },
+    "cold": {
+      "n": 77753,
+      "recall@10": 0.0,
+      "ndcg@10": 0.0
+    },
+    "cold_all": {
+      "n": 77753,
+      "recall@10": 0.0,
+      "ndcg@10": 0.0
+    }
+  },
+  "exposure": {
+    "k": 10,
+    "n_users": 98295,
+    "users_by_cold_slots": [
+      98295,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "cold_slot_share": 0.0,
+    "users_with_any_cold": 0.0,
+    "cold_catalogue_share": 0.10001013273887932
+  },
+  "training": {
+    "history": [],
+    "best_epoch": 0,
+    "epochs_run": 0
+  },
+  "epochs_cap": 300,
+  "train_seconds": 0.0,
+  "n_trainable_params": 0,
+  "device": "cuda",
+  "torch": "2.14.1+cu130",
+  "git_head": "f3260e4f21ed435564864dd6ac1244e9caa0edd2"
+}

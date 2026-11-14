@@ -67,3 +67,41 @@ The full run was also reordered so the finding comes first: baselines, IDs only,
 dropout sweep and the popularity correction, then the remaining content models. English
 CLIP titles, LoRA and Qwen2-VL are extras that run only when asked for. Seeds now train
 as separate processes at the same time on the GPU.
+
+## 2026-11-14: full re-run finished; does the tax still hold?
+
+The core run finished on a Colab Pro T4 in about 6 hours 50 minutes (code version
+f3260e4, 0 failed steps). `results/` now holds only this run. The first run's
+results are gone from the repository and remain in git history.
+
+Every trained model stopped early, with best epochs between 16 and 107 against a cap
+of 300. Learning rate 0.003 was chosen for all three families
+(`results/lr_search/chosen.md`).
+
+**The tax holds in direction and is much smaller than the first run said.**
+Numbers from `results/tradeoff.md`:
+
+- First run: adding IDs to the cover + title model made Recall@10 on old videos 78%
+  better and cut new videos' exposure by 62%. That 78% was an artefact of content
+  models stopped at 30 epochs.
+- This run: 0.0884 to 0.1016 on old videos (15% better), and exposure of new videos
+  from 5.52% to 1.12% of top-10 slots (80% lower).
+- The curve is not a smooth trade-off. From ID dropout 0 to 0.75, Recall@10 on old
+  videos stays between 0.0987 and 0.1026 while exposure rises from 0.00% to 2.57%.
+  The cost comes at the end: with no IDs at all, 0.0899 and 5.38%.
+
+**Popularity is not the cause.** The popularity correction lowered Recall@10 on old
+videos by 17.5% (dropout 0) and 19.4% (dropout 0.5) and did not raise exposure
+(0.00% to 0.00%; 1.68% to 1.38%). Only weakening the IDs moved exposure. One
+correction strength (1.0) was tried.
+
+Open points:
+
+- Untested third explanation: old videos are scored from content plus an ID vector and
+  new videos from content alone, so new videos may lose on the size of their vectors
+  and not on information. The exact 0.00% exposure at dropout 0 points that way.
+- Category popularity gives every new video in a category the same score, so its
+  10.00% exposure and zero recall come from how ties are broken. It should not be on
+  the exposure figure.
+- The figure titles were written before the results and need to match them.
+- English CLIP titles, LoRA and Qwen2-VL were not run (extras, off by default).

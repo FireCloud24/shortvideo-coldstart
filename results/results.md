@@ -19,29 +19,77 @@ Metrics are Recall@10 and NDCG@10 with full ranking, mean ± sample standard dev
 
 ## Main table
 
-The three settings rank the target among different numbers of candidates, so compare models
-**within a column group**, not warm against cold. A uniformly random ranker scores about
-Recall@10 = 10 / candidates (last row).
+The settings rank the target among different numbers of candidates, so compare models **within a
+column group**. The one fair warm-against-cold comparison is "Warm, matched" against "Cold": both rank
+the target among the same number of items (a fixed random sample of warm items, the size of the cold
+set). "Cold vs all items" is the realistic setting: a new video competing with every established one.
+A uniformly random ranker scores about Recall@10 = 10 / candidates (last row).
 
-| Model | Seeds | Warm R@10 | Warm N@10 | Cold R@10 | Cold N@10 | Cold vs all items R@10 | Cold vs all items N@10 | Train s |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| `popularity` | 1 | 0.0025 | 0.0012 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0 |
-| `sasrec_id` | 3 | 0.0902 ± 0.0001 | 0.0500 ± 0.0001 | 0.0048 ± 0.0002 | 0.0022 ± 0.0003 | 0.0000 ± 0.0000 | 0.0000 ± 0.0000 | 224 |
-| `content_cnclip_image` | 3 | 0.0393 ± 0.0004 | 0.0201 ± 0.0002 | 0.0936 ± 0.0017 | 0.0499 ± 0.0018 | 0.0156 ± 0.0008 | 0.0081 ± 0.0002 | 266 |
-| `content_cnclip_text` | 3 | 0.0332 ± 0.0002 | 0.0168 ± 0.0002 | 0.0520 ± 0.0019 | 0.0294 ± 0.0006 | 0.0112 ± 0.0005 | 0.0053 ± 0.0002 | 267 |
-| `content_cnclip_image_text` | 3 | 0.0528 ± 0.0008 | 0.0274 ± 0.0005 | 0.0886 ± 0.0005 | 0.0474 ± 0.0009 | 0.0155 ± 0.0005 | 0.0083 ± 0.0004 | 299 |
-| `content_qwen_vl` | 3 | 0.0340 ± 0.0002 | 0.0168 ± 0.0006 | 0.0649 ± 0.0003 | 0.0325 ± 0.0002 | 0.0106 ± 0.0007 | 0.0050 ± 0.0004 | 331 |
-| `id_content_cnclip_image_text` | 3 | 0.0940 ± 0.0023 | 0.0512 ± 0.0015 | 0.0846 ± 0.0015 | 0.0453 ± 0.0009 | 0.0059 ± 0.0004 | 0.0024 ± 0.0001 | 321 |
-| `id_content_qwen_vl` | 3 | 0.0901 ± 0.0013 | 0.0482 ± 0.0012 | 0.0741 ± 0.0012 | 0.0381 ± 0.0002 | 0.0050 ± 0.0004 | 0.0019 ± 0.0002 | 353 |
-| `content_cnclip_text_lora` | 3 | 0.0348 ± 0.0006 | 0.0182 ± 0.0006 | 0.0508 ± 0.0007 | 0.0275 ± 0.0005 | 0.0072 ± 0.0004 | 0.0033 ± 0.0003 | 267 |
-| `content_cnclip_image_adapter` | 3 | 0.0384 ± 0.0006 | 0.0196 ± 0.0001 | 0.0913 ± 0.0031 | 0.0477 ± 0.0022 | 0.0151 ± 0.0018 | 0.0072 ± 0.0004 | 267 |
-| *random ranker (expected)* | | 0.0006 |  | 0.0051 |  | 0.0005 | | |
+| Model | Seeds | Warm R@10 | Warm N@10 | Warm, matched R@10 | Warm, matched N@10 | Cold R@10 | Cold N@10 | Cold vs all items R@10 | Cold vs all items N@10 | Train s |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `popularity` | 1 | 0.0025 | 0.0012 | 0.0109 | 0.0051 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0 |
+| `popularity_recent` | 1 | 0.0104 | 0.0054 | 0.0507 | 0.0219 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0 |
+| `popularity_category` | 1 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0 |
+| `knn_cnclip_image` | 1 | 0.0202 | 0.0103 | 0.0853 | 0.0464 | 0.0734 | 0.0380 | 0.0176 | 0.0087 | 0 |
+| `knn_cnclip_image_text` | 1 | 0.0254 | 0.0127 | 0.0883 | 0.0491 | 0.0677 | 0.0379 | 0.0198 | 0.0101 | 0 |
+| `sasrec_id` | 3 | 0.0924 ± 0.0010 | 0.0524 ± 0.0004 | 0.2434 ± 0.0045 | 0.1504 ± 0.0036 | 0.0045 ± 0.0005 | 0.0020 ± 0.0002 | 0.0000 ± 0.0000 | 0.0000 ± 0.0000 | 716 |
+| `content_cnclip_image` | 3 | 0.0796 ± 0.0008 | 0.0423 ± 0.0006 | 0.2372 ± 0.0076 | 0.1383 ± 0.0043 | 0.0826 ± 0.0032 | 0.0431 ± 0.0027 | 0.0115 ± 0.0016 | 0.0059 ± 0.0005 | 2228 |
+| `content_cnclip_text` | 3 | 0.0640 ± 0.0024 | 0.0338 ± 0.0011 | 0.1919 ± 0.0080 | 0.1130 ± 0.0037 | 0.0512 ± 0.0019 | 0.0276 ± 0.0014 | 0.0097 ± 0.0008 | 0.0051 ± 0.0006 | 1769 |
+| `content_cnclip_image_text` | 3 | 0.0884 ± 0.0013 | 0.0476 ± 0.0009 | 0.2572 ± 0.0024 | 0.1527 ± 0.0013 | 0.0787 ± 0.0013 | 0.0413 ± 0.0012 | 0.0118 ± 0.0008 | 0.0057 ± 0.0002 | 1648 |
+| `id_content_cnclip_image_text` | 3 | 0.1016 ± 0.0014 | 0.0566 ± 0.0013 | 0.2697 ± 0.0023 | 0.1660 ± 0.0011 | 0.0852 ± 0.0021 | 0.0449 ± 0.0017 | 0.0079 ± 0.0014 | 0.0033 ± 0.0007 | 1124 |
+| `id_content_dropout_000` | 3 | 0.0987 ± 0.0005 | 0.0556 ± 0.0005 | 0.2615 ± 0.0019 | 0.1609 ± 0.0017 | 0.0687 ± 0.0010 | 0.0345 ± 0.0004 | 0.0000 ± 0.0000 | 0.0000 ± 0.0000 | 595 |
+| `id_content_dropout_000_popcorrect` | 3 | 0.0815 ± 0.0010 | 0.0451 ± 0.0005 | 0.2282 ± 0.0015 | 0.1382 ± 0.0011 | 0.0641 ± 0.0015 | 0.0321 ± 0.0006 | 0.0000 ± 0.0000 | 0.0000 ± 0.0000 | 624 |
+| `id_content_dropout_025` | 3 | 0.1008 ± 0.0011 | 0.0559 ± 0.0005 | 0.2689 ± 0.0003 | 0.1653 ± 0.0020 | 0.0874 ± 0.0017 | 0.0462 ± 0.0017 | 0.0074 ± 0.0012 | 0.0029 ± 0.0006 | 982 |
+| `id_content_dropout_050` | 3 | 0.1026 ± 0.0017 | 0.0565 ± 0.0006 | 0.2746 ± 0.0039 | 0.1691 ± 0.0022 | 0.0821 ± 0.0035 | 0.0436 ± 0.0018 | 0.0082 ± 0.0018 | 0.0036 ± 0.0008 | 1200 |
+| `id_content_dropout_050_popcorrect` | 3 | 0.0827 ± 0.0013 | 0.0450 ± 0.0011 | 0.2416 ± 0.0017 | 0.1447 ± 0.0011 | 0.0701 ± 0.0039 | 0.0350 ± 0.0021 | 0.0033 ± 0.0010 | 0.0015 ± 0.0005 | 1031 |
+| `id_content_dropout_075` | 3 | 0.1016 ± 0.0016 | 0.0554 ± 0.0008 | 0.2773 ± 0.0021 | 0.1693 ± 0.0011 | 0.0812 ± 0.0018 | 0.0418 ± 0.0019 | 0.0065 ± 0.0001 | 0.0030 ± 0.0002 | 1686 |
+| `id_content_dropout_090` | 3 | 0.0962 ± 0.0002 | 0.0522 ± 0.0003 | 0.2728 ± 0.0017 | 0.1641 ± 0.0010 | 0.0802 ± 0.0015 | 0.0421 ± 0.0016 | 0.0086 ± 0.0008 | 0.0041 ± 0.0005 | 1895 |
+| `id_content_dropout_100` | 3 | 0.0899 ± 0.0035 | 0.0481 ± 0.0022 | 0.2630 ± 0.0064 | 0.1563 ± 0.0052 | 0.0814 ± 0.0020 | 0.0426 ± 0.0014 | 0.0126 ± 0.0005 | 0.0063 ± 0.0004 | 1922 |
+| *random ranker (expected)* | | 0.0006 |  | 0.0051 |  | 0.0051 |  | 0.0005 | | |
 
-## Fine-tuning cost (RQ3)
+## Training length
 
-| Stage | Steps | Seconds | Peak GPU MB | Trainable encoder params | First loss | Last loss |
-|---|---:|---:|---:|---:|---:|---:|
-| `cnclip_image_adapter` | 392 | 6 | 100 | 262,912 | 6.959 | 6.788 |
-| `lora_text` | 3,134 | 750 | 3935 | 294,912 | 4.929 | 4.945 |
+Early stopping ends a run after 5 epochs without a better validation NDCG@10. A best epoch close
+to the cap would mean the run was cut off while still improving.
 
-Seeds: [0, 1, 2]. Code version(s) (git): 0daf84f.
+| Model | Epoch cap | Epochs run (per seed) | Best epoch (per seed) |
+|---|---:|---|---|
+| `sasrec_id` | 300 | 30/36/30 | 25/31/25 |
+| `content_cnclip_image` | 300 | 112/80/103 | 107/75/98 |
+| `content_cnclip_text` | 300 | 73/67/91 | 68/62/86 |
+| `content_cnclip_image_text` | 300 | 77/61/67 | 72/56/62 |
+| `id_content_cnclip_image_text` | 300 | 55/32/49 | 50/27/44 |
+| `id_content_dropout_000` | 300 | 22/21/22 | 17/16/17 |
+| `id_content_dropout_000_popcorrect` | 300 | 23/23/21 | 18/18/16 |
+| `id_content_dropout_025` | 300 | 38/32/41 | 33/27/36 |
+| `id_content_dropout_050` | 300 | 36/50/56 | 31/45/51 |
+| `id_content_dropout_050_popcorrect` | 300 | 29/40/55 | 24/35/50 |
+| `id_content_dropout_075` | 300 | 56/73/66 | 51/68/61 |
+| `id_content_dropout_090` | 300 | 66/71/75 | 61/66/70 |
+| `id_content_dropout_100` | 300 | 112/67/63 | 107/62/58 |
+
+## Paired comparisons
+
+NDCG@10 of A minus B, per evaluation example (averaged over seeds), with a 95% bootstrap interval
+over examples (2,000 resamples). An interval that excludes 0 means the difference is
+larger than the example-to-example noise. It says nothing about a different data split.
+
+| A | B | Setting | Examples | A − B | 95% interval | Excludes 0 |
+|---|---|---|---:|---:|---|---|
+| `content_cnclip_image_text` | `content_cnclip_image` | Cold | 77,753 | -0.0017 | -0.0026 to -0.0008 | yes |
+| `content_cnclip_image_text` | `content_cnclip_image` | Cold vs all items | 77,753 | -0.0002 | -0.0005 to +0.0002 | no |
+| `id_content_cnclip_image_text` | `sasrec_id` | Warm | 98,295 | +0.0042 | +0.0036 to +0.0047 | yes |
+| `id_content_cnclip_image_text` | `content_cnclip_image_text` | Cold | 77,753 | +0.0036 | +0.0029 to +0.0042 | yes |
+| `content_cnclip_image` | `knn_cnclip_image` | Cold | 77,753 | +0.0071 | +0.0059 to +0.0082 | yes |
+
+## Content features
+
+Copied from the `.meta.json` written next to each cached feature file. "Zero rows" are items
+with no vector (for image features: no cover file); they all share the same all-zero vector.
+
+| Feature | Encoder | Dimensions | Items embedded | Zero rows | Seconds |
+|---|---|---:|---:|---:|---:|
+| `cnclip_image` | OFA-Sys/chinese-clip-vit-base-patch16 | 512 | 19738 | 0 | 342.7 |
+| `cnclip_text` | OFA-Sys/chinese-clip-vit-base-patch16 | 512 | 19738 | 0 | 56.6 |
+
+Seeds: [0, 1, 2]. Code version(s) (git): f3260e4.

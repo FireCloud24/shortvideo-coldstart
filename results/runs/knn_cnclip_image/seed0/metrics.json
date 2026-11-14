@@ -1,0 +1,112 @@
+{
+  "name": "knn_cnclip_image",
+  "seed": 0,
+  "config": {
+    "data": {
+      "pairs": "data/raw/MicroLens-100k_pairs.csv",
+      "categories": "data/raw/tags_to_summary.csv",
+      "recent_frac": 0.1,
+      "features_dir": "data/features",
+      "cold_item_frac": 0.1,
+      "min_warm_len": 3,
+      "max_len": 20
+    },
+    "model": {
+      "kind": "content_knn",
+      "features": [
+        "cnclip_image"
+      ],
+      "dim": 64,
+      "n_layers": 2,
+      "n_heads": 2,
+      "dropout": 0.2,
+      "id_dropout": 0.3
+    },
+    "train": {
+      "epochs": 300,
+      "batch_size": 256,
+      "lr": 0.001,
+      "amp": true,
+      "weight_decay": 0.0,
+      "patience": 5,
+      "pop_correction": 0.0,
+      "save_model": false
+    },
+    "eval": {
+      "ks": [
+        10
+      ],
+      "batch_size": 1024
+    },
+    "out_dir": "results/runs",
+    "name": "knn_cnclip_image"
+  },
+  "split": {
+    "n_items": 19738,
+    "n_warm_items": 17764,
+    "n_cold_items": 1974,
+    "n_train_users": 99939,
+    "n_train_interactions": 444199,
+    "n_valid": 98295,
+    "n_warm_test": 98295,
+    "n_cold_test": 77753
+  },
+  "metrics": {
+    "valid": {
+      "n": 98295,
+      "recall@10": 0.024029706495752583,
+      "ndcg@10": 0.012398901417332941
+    },
+    "warm": {
+      "n": 98295,
+      "recall@10": 0.020245180324533294,
+      "ndcg@10": 0.010329427554076873
+    },
+    "warm_matched": {
+      "n": 98295,
+      "recall@10": 0.08530444071417671,
+      "ndcg@10": 0.04635280299665524
+    },
+    "cold": {
+      "n": 77753,
+      "recall@10": 0.0733733746607848,
+      "ndcg@10": 0.037971075883592546
+    },
+    "cold_all": {
+      "n": 77753,
+      "recall@10": 0.017645621390814503,
+      "ndcg@10": 0.008686854076258752
+    }
+  },
+  "exposure": {
+    "k": 10,
+    "n_users": 98295,
+    "users_by_cold_slots": [
+      30458,
+      36271,
+      21007,
+      7970,
+      2152,
+      383,
+      50,
+      3,
+      1,
+      0,
+      0
+    ],
+    "cold_slot_share": 0.11500788442952338,
+    "users_with_any_cold": 0.690136833002696,
+    "cold_catalogue_share": 0.10001013273887932
+  },
+  "training": {
+    "history": [],
+    "best_epoch": 0,
+    "epochs_run": 0
+  },
+  "epochs_cap": 300,
+  "train_seconds": 0.0,
+  "n_trainable_params": 0,
+  "device": "cuda",
+  "torch": "2.14.1+cu130",
+  "git_head": "f3260e4f21ed435564864dd6ac1244e9caa0edd2"
+}

@@ -4,6 +4,8 @@
   "config": {
     "data": {
       "pairs": "data/raw/MicroLens-100k_pairs.csv",
+      "categories": "data/raw/tags_to_summary.csv",
+      "recent_frac": 0.1,
       "features_dir": "data/features",
       "cold_item_frac": 0.1,
       "min_warm_len": 3,
@@ -19,11 +21,14 @@
       "id_dropout": 0.3
     },
     "train": {
-      "epochs": 30,
+      "epochs": 300,
       "batch_size": 256,
       "lr": 0.001,
+      "amp": true,
       "weight_decay": 0.0,
-      "patience": 5
+      "patience": 5,
+      "pop_correction": 0.0,
+      "save_model": false
     },
     "eval": {
       "ks": [
@@ -55,6 +60,11 @@
       "recall@10": 0.0024518032453329265,
       "ndcg@10": 0.001238128355130649
     },
+    "warm_matched": {
+      "n": 98295,
+      "recall@10": 0.010875426013530698,
+      "ndcg@10": 0.005074915134156754
+    },
     "cold": {
       "n": 77753,
       "recall@10": 0.0,
@@ -66,14 +76,35 @@
       "ndcg@10": 0.0
     }
   },
+  "exposure": {
+    "k": 10,
+    "n_users": 98295,
+    "users_by_cold_slots": [
+      98295,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "cold_slot_share": 0.0,
+    "users_with_any_cold": 0.0,
+    "cold_catalogue_share": 0.10001013273887932
+  },
   "training": {
     "history": [],
     "best_epoch": 0,
     "epochs_run": 0
   },
+  "epochs_cap": 300,
   "train_seconds": 0.0,
   "n_trainable_params": 0,
   "device": "cuda",
   "torch": "2.14.1+cu130",
-  "git_head": "0daf84f9d37ed690e076d31b6311f01ccf325c0b"
+  "git_head": "f3260e4f21ed435564864dd6ac1244e9caa0edd2"
 }

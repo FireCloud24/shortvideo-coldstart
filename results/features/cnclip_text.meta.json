@@ -1,0 +1,14 @@
+{
+  "model": "OFA-Sys/chinese-clip-vit-base-patch16",
+  "n_items_embedded": 19738,
+  "seconds": 56.6,
+  "limit": null,
+  "lora_dir": null,
+  "title_language": "en",
+  "shape": [
+    19739,
+    512
+  ],
+  "zero_rows": 0,
+  "dtype": "float32"
+}
