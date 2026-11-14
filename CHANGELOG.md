@@ -162,3 +162,35 @@ The two gaps left by the vector-length test are closed
 
 The README's two limits about factors tried on test users and the missing comparison
 were removed, and these two were added in their place.
+
+## 2026-11-14, last: figures and wording brought in line with the results
+
+A read-through of the README against `results/` found four things to fix. No model was
+retrained and no number in `results/*.md` changed.
+
+- The headline compared the dropout 0.3 model with the model with no IDs (+13.0%). It
+  now uses the model that always uses its IDs (dropout 0): +9.9% on old videos, and
+  new videos fall from 5.38% of slots to 0.00%. That is the tax as people usually build
+  the model.
+- "Beats the model with no IDs in every column" was wrong. At about the same share of
+  new videos (9.91% against 11.28%), the calibrated dropout 0.5 model matches it on new
+  videos (0.0202 against 0.0197, inside the spread across seeds) and is 14% better on
+  old ones. Lower exposure is not a win in itself when the target is 10%.
+- The first run's 78% is now set against the same comparison in this run (cover + title
+  model against dropout 0.3: 0.0884 to 0.1016, 15%). The README had given 13.0%, which
+  uses a different model as the baseline.
+- The main table ranks old videos among old videos only; the calibration table ranks
+  among all videos. The README now says so.
+
+Figures:
+
+- `results/scale_test/scale_test.png` is redrawn (same data). The old one put exposure
+  and recall on two y-axes, one per model. The new one plots recall on old and on new
+  videos against new videos' share of slots, one line per model, so models can be
+  compared at the same exposure. It shows something the tables only hint at: at the
+  same share of new videos, the two models with IDs are level on old videos and far
+  apart on new ones. It is now the first figure in the README.
+- `results/tradeoff.png`: point labels overlapped ("0.25" on "0.3", "1" on
+  "Cover + title"). Labels are now placed to avoid each other, the points and the lines.
+
+The "Why I cared" section is left for me to write.
