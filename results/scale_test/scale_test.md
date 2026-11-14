@@ -2,6 +2,19 @@
 
 Each model is evaluated as trained (factor 1) and again with every new video's vector multiplied by a factor. Nothing is retrained. "matched" makes the mean length of a new video's vector equal the mean length of an old video's. Exposure: share of top-10 slots going to new videos in a mixed feed. The two Recall@10 columns rank the target among all videos, old and new. Mean ± sample standard deviation over seeds.
 
+## Like for like
+
+Calibrated: new videos' vectors are multiplied by the factor that gives them their share of the catalogue in the validation users' top-10 lists. The factor is found without any test target and the numbers below are for the test users.
+
+| Model | New videos' vectors | Factor | New-video exposure (%) | Recall@10, new video among all | Recall@10, old video among all |
+|---|---|---:|---:|---:|---:|
+| IDs + cover + title, ID dropout 0 | as trained | 1 | 0.00 ± 0.00 | 0.0000 ± 0.0000 | 0.0987 ± 0.0005 |
+| IDs + cover + title, ID dropout 0 | calibrated | 1.42 ± 0.02 | 6.92 ± 0.19 | 0.0027 ± 0.0011 | 0.0958 ± 0.0007 |
+| IDs + cover + title, ID dropout 0.5 | as trained | 1 | 1.68 ± 0.27 | 0.0082 ± 0.0018 | 0.1009 ± 0.0013 |
+| IDs + cover + title, ID dropout 0.5 | calibrated | 1.16 ± 0.00 | 9.91 ± 0.14 | 0.0202 ± 0.0026 | 0.0953 ± 0.0012 |
+| Cover + title, no IDs (ID dropout 1) | as trained | 1 | 5.38 ± 0.46 | 0.0126 ± 0.0005 | 0.0866 ± 0.0033 |
+| Cover + title, no IDs (ID dropout 1) | calibrated | 1.06 ± 0.01 | 11.28 ± 0.21 | 0.0197 ± 0.0014 | 0.0836 ± 0.0031 |
+
 ## IDs + cover + title, ID dropout 0
 
 Seeds: 3. Mean vector length: old videos 3.420 ± 0.144, new videos 2.335 ± 0.136. Matching factor: 1.47 ± 0.03.
@@ -14,6 +27,7 @@ Seeds: 3. Mean vector length: old videos 3.420 ± 0.144, new videos 2.335 ± 0.1
 | 2 | 57.42 ± 10.70 | 0.0299 ± 0.0099 | 0.0658 ± 0.0082 |
 | 3 | 90.69 ± 5.37 | 0.0578 ± 0.0076 | 0.0312 ± 0.0087 |
 | matched | 10.64 ± 2.36 | 0.0045 ± 0.0023 | 0.0942 ± 0.0019 |
+| calibrated | 6.92 ± 0.19 | 0.0027 ± 0.0011 | 0.0958 ± 0.0007 |
 
 ## IDs + cover + title, ID dropout 0.5
 
@@ -27,3 +41,18 @@ Seeds: 3. Mean vector length: old videos 6.723 ± 0.693, new videos 4.888 ± 0.3
 | 2 | 96.03 ± 0.69 | 0.0784 ± 0.0054 | 0.0280 ± 0.0029 |
 | 3 | 99.25 ± 0.52 | 0.0814 ± 0.0045 | 0.0101 ± 0.0054 |
 | matched | 40.38 ± 8.73 | 0.0424 ± 0.0050 | 0.0780 ± 0.0034 |
+| calibrated | 9.91 ± 0.14 | 0.0202 ± 0.0026 | 0.0953 ± 0.0012 |
+
+## Cover + title, no IDs (ID dropout 1)
+
+Seeds: 3. Mean vector length: old videos 17.774 ± 2.638, new videos 16.713 ± 2.503. Matching factor: 1.06 ± 0.01.
+
+| Factor on new videos | New-video exposure (%) | Recall@10, new video among all | Recall@10, old video among all |
+|---|---:|---:|---:|
+| 1 | 5.38 ± 0.46 | 0.0126 ± 0.0005 | 0.0866 ± 0.0033 |
+| 1.25 | 50.62 ± 6.98 | 0.0508 ± 0.0056 | 0.0640 ± 0.0015 |
+| 1.5 | 91.56 ± 3.17 | 0.0746 ± 0.0020 | 0.0333 ± 0.0019 |
+| 2 | 99.22 ± 0.31 | 0.0811 ± 0.0018 | 0.0099 ± 0.0024 |
+| 3 | 99.98 ± 0.04 | 0.0814 ± 0.0020 | 0.0005 ± 0.0007 |
+| matched | 11.36 ± 0.75 | 0.0198 ± 0.0013 | 0.0835 ± 0.0029 |
+| calibrated | 11.28 ± 0.21 | 0.0197 ± 0.0014 | 0.0836 ± 0.0031 |
