@@ -105,3 +105,37 @@ Open points:
   the exposure figure.
 - The figure titles were written before the results and need to match them.
 - English CLIP titles, LoRA and Qwen2-VL were not run (extras, off by default).
+
+## 2026-11-14, later: the vector-length test
+
+Question: are new videos buried because their vectors are shorter than old videos'
+(content alone against content plus an ID part), and not because IDs know more?
+
+Test (`scripts/scale_test.py`, numbers in `results/scale_test/scale_test.md`): two
+ID + content models were retrained with their weights saved (ID dropout 0 and 0.5,
+three seeds, Colab T4, code version c65b7ca), then every new video's vector was
+multiplied by a factor with nothing retrained.
+
+- New videos' vectors are shorter: 2.34 against 3.42 (dropout 0) and 4.89 against 6.72
+  (dropout 0.5).
+- Exposure is very sensitive to that length. Dropout 0.5: 1.68% of top-10 slots as
+  trained, 19.80% at a factor of 1.25, 40.38% with mean lengths matched (factor 1.37).
+  Dropout 0: 0.00% as trained, 10.64% with lengths matched (factor 1.47).
+- With the dropout 0.5 model at a factor of 1.25, Recall@10 for the new video a user
+  took, ranked among all videos, goes from 0.0082 to 0.0292, and Recall@10 for old
+  videos among all videos goes from 0.1009 to 0.0897.
+- The dropout 0 model gains exposure but not accuracy on new videos (0.0045 with
+  lengths matched). Its content part was never trained to stand alone.
+
+Reading: most of the burying is a matter of score scale, which neither of the two
+planned explanations covers. ID dropout decides whether the exposed new videos are
+the right ones.
+
+Limits: the factors were tried on the test users, not chosen on validation. Matching
+mean lengths overshoots the catalogue share (40% against 10%), so it is a dial, not a
+fix. Recall for old videos here is measured among all videos, which is not the same
+column as the main table's (among old videos only). The content-only model was not
+measured among all videos, so a like-for-like comparison with it is still missing.
+
+The first Colab attempt at this test failed because the dataset server was
+unreachable; a retry worked.
