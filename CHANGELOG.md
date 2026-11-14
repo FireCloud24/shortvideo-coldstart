@@ -139,3 +139,26 @@ measured among all videos, so a like-for-like comparison with it is still missin
 
 The first Colab attempt at this test failed because the dataset server was
 unreachable; a retry worked.
+
+## 2026-11-14, later still: the factor chosen on validation, and a like-for-like table
+
+The two gaps left by the vector-length test are closed
+(`results/scale_test/scale_test.md`, section "Like for like"; code version 384d586).
+
+- The factor is now chosen on the validation users: the one at which new videos get
+  their share of the catalogue (10%) in those users' top-10 lists. It is then applied
+  to the test users. Factors found: 1.42 (ID dropout 0), 1.16 (dropout 0.5), 1.06 (no
+  IDs).
+- The model with no IDs was retrained with its weights saved and measured in the same
+  three columns as the others. Its best epochs (107, 62, 58) match the overnight run.
+- Calibrated, the dropout 0.5 model gives new videos 9.91% of slots, finds the new
+  video a user took 0.0202 of the time and the old one 0.0953 of the time. The model
+  with no IDs, as trained: 5.38%, 0.0126 and 0.0866. Calibrated: 11.28%, 0.0197 and
+  0.0836.
+- The model with no IDs also gains from calibration although its vectors are almost
+  the same length (matching factor 1.06). Vector length does not explain that part.
+- The calibrated exposure on test users is 6.92% to 11.28% against the 10% target.
+  Validation and test users are the same people one step apart.
+
+The README's two limits about factors tried on test users and the missing comparison
+were removed, and these two were added in their place.

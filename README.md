@@ -8,7 +8,7 @@ When a short-video recommender gets better at videos it has seen before, how muc
 
 ## What I found
 
-Giving a content-based recommender an ID for every video made it 13.0% better at recommending old videos, and cut the share of top-10 slots going to new videos by 79.3%, from 5.38% to 1.12%. Most of that burying is not about what the model knows. New videos get shorter vectors than old ones, so they score lower whatever they show.
+Giving a content-based recommender an ID for every video made it 13.0% better at recommending old videos, and cut the share of top-10 slots going to new videos by 79.3%, from 5.38% to 1.12%. Most of that burying is not about what the model knows. New videos get shorter vectors than old ones, so they score lower whatever they show. Multiplying their vectors by 1.16, a factor chosen on validation users, gives a model that beats the one with no IDs on old videos, on new videos and on exposure.
 
 ![Accuracy on old videos against how often new videos are shown](results/tradeoff.png)
 
@@ -17,14 +17,12 @@ Each point is a model. Up is better on old videos; right means new videos appear
 | ID dropout in training | Recall@10 on old videos | New videos' share of top-10 slots |
 |---:|---:|---:|
 | 0 | 0.0987 | 0.00% |
-| 0.25 | 0.1008 | 0.73% |
 | 0.3 | 0.1016 | 1.12% |
 | 0.5 | 0.1026 | 1.68% |
 | 0.75 | 0.1016 | 2.57% |
-| 0.9 | 0.0962 | 2.77% |
 | 1 (no IDs) | 0.0899 | 5.38% |
 
-Three seeds each. Standard deviations and every other model are in [results/tradeoff.md](results/tradeoff.md).
+Three seeds each. Standard deviations, the other dropout rates and the baselines are in [results/tradeoff.md](results/tradeoff.md) and [results/results.md](results/results.md).
 
 The curve surprised me. I expected a steady trade. From dropout 0 to 0.75, accuracy on old videos stays between 0.0987 and 0.1026 while exposure goes from 0.00% to 2.57%. Some exposure for new videos is free. The price comes only at the end: removing IDs entirely costs 12.4% on old videos.
 
@@ -40,21 +38,26 @@ I set out to test two explanations.
 
 Popularity did not hold. I trained with each video's popularity added to its score and ranked without it (the orange arrows). Accuracy on old videos fell by 17.5% and 19.4% at the two dropout rates I tried, and exposure did not rise (0.00% stayed 0.00%; 1.68% became 1.38%).
 
-Then one number bothered me. The dropout 0 model gave new videos exactly 0.00% of slots, for every user and seed. That looked like a scale problem. An old video's vector is content plus an ID part. A new video's is content alone, and it is shorter: 4.89 against 6.72 on average in the dropout 0.5 model. So I multiplied the new videos' vectors by a factor, with nothing retrained.
+Then one number bothered me. The dropout 0 model gave new videos exactly 0.00% of slots, for every user and seed. That looked like a scale problem. An old video's vector is content plus an ID part. A new video's is content alone, and it is shorter: 4.89 against 6.72 on average in the dropout 0.5 model. So I multiplied the new videos' vectors by a factor, with nothing retrained. A factor of 1.25 moved the dropout 0.5 model's new videos from 1.68% of slots to 19.80%.
 
-| Factor on new videos (dropout 0.5 model) | New videos' share of slots | Recall@10, the new video a user took | Recall@10, the old video a user took |
-|---|---:|---:|---:|
-| 1 (as trained) | 1.68% | 0.0082 | 0.1009 |
-| 1.25 | 19.80% | 0.0292 | 0.0897 |
-| 1.37 (average lengths matched) | 40.38% | 0.0424 | 0.0780 |
+To choose the factor fairly I used the validation users: the factor that gives new videos their share of the catalogue (10%) in those users' lists. Then I applied it to the test users.
 
-Both recall columns rank the target among all videos, old and new. Full table and the dropout 0 model: [results/scale_test/scale_test.md](results/scale_test/scale_test.md).
+| Model | New videos' vectors | Factor | New videos' share of slots | Recall@10, the new video a user took | Recall@10, the old video a user took |
+|---|---|---:|---:|---:|---:|
+| ID dropout 0 | as trained | 1 | 0.00% | 0.0000 | 0.0987 |
+| ID dropout 0 | calibrated | 1.42 | 6.92% | 0.0027 | 0.0958 |
+| ID dropout 0.5 | as trained | 1 | 1.68% | 0.0082 | 0.1009 |
+| ID dropout 0.5 | calibrated | 1.16 | 9.91% | 0.0202 | 0.0953 |
+| No IDs | as trained | 1 | 5.38% | 0.0126 | 0.0866 |
+| No IDs | calibrated | 1.06 | 11.28% | 0.0197 | 0.0836 |
+
+Both recall columns rank the target among all videos, old and new. Standard deviations and every factor I tried: [results/scale_test/scale_test.md](results/scale_test/scale_test.md).
 
 So the answer has three parts:
 
 1. Popularity is not the cause.
-2. Vector length causes most of the burying.
-3. ID dropout decides whether the new videos that get shown are the right ones. The dropout 0 model, stretched until lengths matched, reached 10.64% exposure but found the right new video only 0.0045 of the time. Its content part never learned to work alone.
+2. Score scale causes most of the burying. One factor takes the dropout 0.5 model from 1.68% to 9.91% of slots, and it then beats the model with no IDs in every column.
+3. ID dropout decides whether the new videos that get shown are the right ones. The dropout 0 model, calibrated, shows new videos in 6.92% of slots but finds the right one only 0.0027 of the time. Its content part never learned to work alone.
 
 My view is that "capacity" survives only as point 3. The tax is mostly a calibration problem.
 
@@ -64,7 +67,6 @@ My view is that "capacity" survives only as point 3. The tax is mostly a calibra
 - **Models.** A SASRec sequence model whose video vectors come from learned IDs, from frozen Chinese-CLIP cover and title features through a small trained layer, or from both. The loss is a full softmax cross-entropy over all old videos; the original SASRec paper used a sampled binary loss.
 - **Measures.** Recall@10 with full ranking for each user's held-out old video. Exposure is the share of top-10 slots going to new videos when each of 98,295 test users gets one list drawn from all videos.
 - **Training.** Three seeds. The learning rate was chosen per model family on validation only ([results/lr_search/chosen.md](results/lr_search/chosen.md)). Early stopping ended every run between epoch 16 and 107, against a cap of 300.
-- **Baselines.** Popularity, recent popularity and nearest covers with no training, in [results/results.md](results/results.md).
 
 Every number here is written by a script into `results/`. The process, failed runs included, is in [CHANGELOG.md](CHANGELOG.md).
 
@@ -79,9 +81,8 @@ A plate of food looks like what it is. A film still does not tell you which film
 ## What did not work, and what I would do next
 
 - **My first run was wrong.** Every model stopped at a 30-epoch cap, and the content models were far from trained. That run said IDs made old-video accuracy 78% better. Trained properly, the figure is 13.0%. I now check the best epoch against the cap before reading any result.
-- **The stretch factors were tried on the test users**, with none chosen on validation. They show a cause. They are not yet a method.
-- **Matching lengths overshoots.** New videos are 10% of the catalogue and got 40.38% of slots.
-- **One comparison is missing.** The stretched models were measured among all videos and the content-only model among old videos only, so I cannot yet compare them like for like.
+- **Vector length is not the whole story.** The model with no IDs also under-shows new videos (5.38%), and its vectors are almost the same length (a matching factor of 1.06). I do not know yet what causes that part.
+- **Calibration misses its target a little.** I aimed for 10% on validation users and got 6.92% to 11.28% on test users. They are the same people one step later, so this is a weak test of how well the factor carries over.
 - **The titles are English translations** fed to a Chinese text encoder; the 100K release has no Chinese titles.
 - **One popularity correction strength** was tried.
 - **LoRA and Qwen2-VL** are in the code and were left out of this run. My earlier LoRA attempt was under-trained and is preliminary.
