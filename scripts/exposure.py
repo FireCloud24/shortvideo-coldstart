@@ -37,7 +37,20 @@ LABELS = {
     "id_content_qwen_vl": "IDs + Qwen2-VL",
     "content_cnclip_text_lora": "Title only, LoRA (preliminary)",
     "content_cnclip_image_lora": "Cover only, LoRA (preliminary)",
+    "id_content_dropout_000": "IDs + cover + title, ID dropout 0",
+    "id_content_dropout_025": "IDs + cover + title, ID dropout 0.25",
+    "id_content_dropout_050": "IDs + cover + title, ID dropout 0.5",
+    "id_content_dropout_075": "IDs + cover + title, ID dropout 0.75",
+    "id_content_dropout_090": "IDs + cover + title, ID dropout 0.9",
+    "id_content_dropout_100": "IDs + cover + title, ID dropout 1 (no IDs)",
+    "id_content_dropout_000_popcorrect": "ID dropout 0, popularity correction",
+    "id_content_dropout_050_popcorrect": "ID dropout 0.5, popularity correction",
 }
+LABELS["id_content_cnclip_image_text"] = "IDs + cover + title, ID dropout 0.3"
+
+# Category popularity gives every new video in a category the same score, so which of them
+# reach a top 10 is decided by how ties happen to be broken. Its exposure number means nothing.
+TIED_SCORES = {"popularity_category"}
 
 
 def label(name: str) -> str:
@@ -55,6 +68,8 @@ def pooled_histogram(runs: list[dict]) -> list[int] | None:
 def exposure_rows(runs: dict[str, list[dict]]) -> list[dict]:
     rows = []
     for name in ordered(runs):
+        if name in TIED_SCORES:
+            continue
         with_exposure = [r for r in runs[name] if r.get("exposure") and r["exposure"]["cold_slot_share"] is not None]
         if not with_exposure:
             continue
@@ -96,7 +111,9 @@ def exposure_markdown(rows: list[dict]) -> str:
         lines.append(f"| {label(r['name'])} | {r['seeds']} | {pct(r['share'])}{std} | "
                      f"{pct(r['low'])} to {pct(r['high'])} | {pct(r['users_with_any'], 1)} | "
                      f"{pct(r['users_with_3_plus'], 1)} |")
-    lines += ["", "Share: mean over seeds (± sample standard deviation). Interval: bootstrap over users, "
+    lines += ["", "Category popularity is left out: it gives every new video in a category the same score, so "
+                  "its exposure depends only on how ties are broken.",
+              "", "Share: mean over seeds (± sample standard deviation). Interval: bootstrap over users, "
                   "seeds pooled. The per-user columns pool the seeds.", ""]
     return "\n".join(lines)
 

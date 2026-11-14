@@ -14,6 +14,13 @@ Warm Recall@10: the held-out old video is in the top 10, ranked among all old vi
 | IDs + cover + title | 0.9 | 3 | 0.0962 ± 0.0002 | 2.77 ± 0.25 |
 | IDs + cover + title | 1.0 | 3 | 0.0899 ± 0.0035 | 5.38 ± 0.46 |
 
+Comparisons along the sweep:
+
+- Adding IDs (dropout 0.3) to the model with no IDs (dropout 1): Recall@10 on old videos +13.0% (0.0899 to 0.1016), exposure -79.3% (5.38% to 1.12%).
+- Adding IDs (dropout 0) to the model with no IDs (dropout 1): Recall@10 on old videos +9.9% (0.0899 to 0.0987), exposure -100.0% (5.38% to 0.00%).
+- Removing IDs entirely from the best model on old videos (dropout 0.5): Recall@10 on old videos -12.4% (0.1026 to 0.0899), exposure +219.8% (1.68% to 5.38%).
+- From dropout 0 to 0.75, Recall@10 on old videos stays between 0.0987 and 0.1026 while exposure goes from 0.00% to 2.57%.
+
 ## Popularity correction
 
 Trained with the log of each video's share of training interactions added to its score, and scored without it. Change is against the run with the same ID dropout and no correction.
@@ -29,7 +36,6 @@ Trained with the log of each video's share of training interactions added to its
 |---|---:|---:|---:|---:|
 | Popularity |  | 1 | 0.0025 | 0.00 |
 | Recent popularity |  | 1 | 0.0104 | 0.00 |
-| Category popularity |  | 1 | 0.0000 | 10.00 |
 | Nearest covers (no training) |  | 1 | 0.0202 | 11.50 |
 | Nearest covers + titles (no training) |  | 1 | 0.0254 | 10.71 |
 | IDs only |  | 3 | 0.0924 ± 0.0010 | 0.00 ± 0.00 |

@@ -22,7 +22,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from exposure import label  # noqa: E402
+from exposure import TIED_SCORES, label  # noqa: E402
 from report import COLD_COLOR, INK, MUTED, SURFACE, WARM_COLOR, load_runs, mean_std, ordered, style_axis  # noqa: E402
 
 SWEEP_FEATURES = ["cnclip_image", "cnclip_text"]  # the curve is drawn for this ID + content model
@@ -61,6 +61,37 @@ def pm(mean: float, std: float | None, scale: float = 1.0, digits: int = 4) -> s
     return f"{scale * mean:.{digits}f}" + ("" if std is None else f" ± {scale * std:.{digits}f}")
 
 
+def change(a: dict, b: dict) -> str:
+    """'b against a' in words: relative change in warm Recall@10 and in exposure."""
+    warm = f"{100 * (b['warm'] / a['warm'] - 1):+.1f}%"
+    exposure = (f"{100 * (b['exposure'] / a['exposure'] - 1):+.1f}%" if a["exposure"] > 0
+                else f"from zero to {100 * b['exposure']:.2f}%")
+    return (f"Recall@10 on old videos {warm} ({a['warm']:.4f} to {b['warm']:.4f}), "
+            f"exposure {exposure} ({100 * a['exposure']:.2f}% to {100 * b['exposure']:.2f}%)")
+
+
+def comparisons(curve: list[dict]) -> list[str]:
+    """The comparisons the README quotes, computed here so they are never typed by hand."""
+    by = {p["id_dropout"]: p for p in curve}
+    lines = ["Comparisons along the sweep:", ""]
+    if 1.0 in by:
+        no_ids = by[1.0]
+        for rate in (0.3, 0.0):
+            if rate in by:
+                lines.append(f"- Adding IDs (dropout {rate:g}) to the model with no IDs (dropout 1): "
+                             f"{change(no_ids, by[rate])}.")
+        best = max(curve, key=lambda p: p["warm"])
+        lines.append(f"- Removing IDs entirely from the best model on old videos (dropout {best['id_dropout']:g}): "
+                     f"{change(best, no_ids)}.")
+    inner = [p for p in curve if p["id_dropout"] <= 0.75]
+    if len(inner) > 1:
+        lines.append(f"- From dropout {inner[0]['id_dropout']:g} to {inner[-1]['id_dropout']:g}, Recall@10 on old "
+                     f"videos stays between {min(p['warm'] for p in inner):.4f} and "
+                     f"{max(p['warm'] for p in inner):.4f} while exposure goes from "
+                     f"{100 * inner[0]['exposure']:.2f}% to {100 * inner[-1]['exposure']:.2f}%.")
+    return lines
+
+
 def tradeoff_markdown(points: list[dict]) -> str:
     curve, corrected, others = classify(points)
     lines = ["# Trade-off: accuracy on old videos against exposure of new videos", "",
@@ -73,6 +104,7 @@ def tradeoff_markdown(points: list[dict]) -> str:
     if curve:
         lines += ["## ID dropout sweep (IDs + cover + title)", ""] + head
         lines += [row(p, "IDs + cover + title") for p in curve] + [""]
+        lines += comparisons(curve) + [""]
     if corrected:
         lines += ["## Popularity correction", "",
                   "Trained with the log of each video's share of training interactions added to its score, "
@@ -107,7 +139,7 @@ def tradeoff_chart(points: list[dict], path: Path) -> None:
         ax.errorbar([x(p) for p in curve], [p["warm"] for p in curve],
                     xerr=[100 * (p["exposure_std"] or 0) for p in curve], yerr=[p["warm_std"] or 0 for p in curve],
                     fmt="o", color=WARM_COLOR, ecolor=WARM_COLOR, markersize=6, capsize=2, zorder=4,
-                    label="IDs + cover + title, by ID dropout")
+                    label="IDs + cover + title, by ID dropout in training")
         for p in curve:
             ax.annotate(f"{p['id_dropout']:g}", (x(p), p["warm"]), xytext=(6, 6), textcoords="offset points",
                         fontsize=9, color=INK)
@@ -119,7 +151,10 @@ def tradeoff_chart(points: list[dict], path: Path) -> None:
                         arrowprops=dict(arrowstyle="->", color=COLD_COLOR, linewidth=1.2), zorder=4)
     ax.set_xlabel("Share of top-10 slots going to new videos (%)")
     ax.set_ylabel("Recall@10 on old videos")
-    ax.set_title("Better on old videos, fewer new videos shown", loc="left", color=INK, fontsize=12)
+    ax.set_title("Accuracy on old videos against how often new videos are shown", loc="left", color=INK,
+                 fontsize=12)
+    ax.margins(x=0.22)  # room for the point labels on the right
+    ax.set_xlim(left=-0.6)
     style_axis(ax)
     ax.yaxis.grid(True, color="#e4e3df", linewidth=0.8)
     if curve or corrected:
@@ -135,7 +170,8 @@ def main(argv=None) -> int:
     args = p.parse_args(argv)
     results = Path(args.results)
     runs = load_runs(results / "runs")
-    points = [pt for pt in (point(name, runs[name]) for name in ordered(runs)) if pt is not None]
+    points = [pt for pt in (point(name, runs[name]) for name in ordered(runs) if name not in TIED_SCORES)
+              if pt is not None]
     (results / "tradeoff.md").write_text(tradeoff_markdown(points), encoding="utf-8")
     print(f"wrote {results / 'tradeoff.md'} ({len(points)} models)")
     if points:
