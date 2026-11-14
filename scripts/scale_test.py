@@ -197,36 +197,127 @@ def side_by_side(results: dict, names: dict[str, str]) -> list[str]:
     return lines + [""]
 
 
-def chart(results: dict, names: dict[str, str], path: Path) -> None:
+def curve(seeds: dict) -> list[dict]:
+    """One point per factor (the fixed ones and the calibrated one), mean and std over seeds, by factor.
+
+    "matched" is left out: it is a different factor in each seed and it is reported in the tables."""
+    labels = [r["label"] for r in next(iter(seeds.values()))["rows"] if r["label"] != "matched"]
+    points = []
+    for label in labels:
+        rows = [r for s in seeds.values() for r in s["rows"] if r["label"] == label]
+        point = {"label": label, "factor": mean_std([r["factor"] for r in rows])[0]}
+        for key, path in (("exposure", ("exposure", "cold_slot_share")), ("new", ("cold_all", "recall@10")),
+                          ("old", ("warm_all", "recall@10"))):
+            mean, std = mean_std([r[path[0]][path[1]] for r in rows])
+            point[key], point[f"{key}_std"] = mean, std or 0.0
+        points.append(point)
+    return sorted(points, key=lambda p: p["factor"])
+
+
+# Fixed per model, so a model keeps its colour whichever models are shown.
+COLORS = {"id_content_dropout_050": "#2a78d6", "id_content_dropout_100": "#eb6834",
+          "id_content_dropout_000": "#1baf7a"}
+SHORT = {"id_content_dropout_000": "ID dropout 0", "id_content_dropout_050": "ID dropout 0.5",
+         "id_content_dropout_100": "No IDs"}
+
+
+def visible_range(shown: dict, key: str, x_max: float) -> tuple[float, float]:
+    """Lowest and highest value of `key` the lines reach left of x_max (exposure in %)."""
+    values = []
+    for points in shown.values():
+        xs = [100 * p["exposure"] for p in points]
+        values += [p[key] for p, x in zip(points, xs) if x <= x_max]
+        values.append(float(np.interp(x_max, xs, [p[key] for p in points])))
+    return min(values), max(values)
+
+
+def spread(ys: dict, gap: float) -> dict:
+    """Move label positions apart so that neighbours are at least `gap` apart.
+
+    Labels closer than `gap` form a group, spaced `gap` apart around the group's mean; others stay put."""
+    order = sorted(ys, key=ys.get)
+    groups = [[order[0]]]
+    for name in order[1:]:
+        if ys[name] - ys[groups[-1][-1]] < gap:
+            groups[-1].append(name)
+        else:
+            groups.append([name])
+    out = {}
+    for group in groups:
+        centre = sum(ys[n] for n in group) / len(group)
+        for i, name in enumerate(group):
+            out[name] = centre + (i - (len(group) - 1) / 2) * gap
+    return out
+
+
+def chart(results: dict, names: dict[str, str], path: Path, x_max: float = 25.0) -> None:
+    """Old- and new-video recall against new videos' share of slots, as the factor grows.
+
+    Each line is one model; moving right along it multiplies new videos' vectors by a bigger factor.
+    Hollow dot: the model as trained. Large dot: the factor calibrated on validation users."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from report import COLD_COLOR, INK, MUTED, SURFACE, WARM_COLOR, style_axis
+    from report import INK, MUTED, SURFACE, style_axis
 
-    shown = {n: s for n, s in results.items() if s}
-    fig, axes = plt.subplots(1, len(shown), figsize=(5.2 * len(shown), 4.2), facecolor=SURFACE, squeeze=False)
-    for ax, (name, seeds) in zip(axes[0], shown.items()):
-        n_fixed = len(FACTORS)
-        factors = [r["factor"] for r in next(iter(seeds.values()))["rows"][:n_fixed]]
-        exposure = [100 * mean_std([s["rows"][i]["exposure"]["cold_slot_share"] for s in seeds.values()])[0]
-                    for i in range(n_fixed)]
-        warm = [mean_std([s["rows"][i]["warm_all"]["recall@10"] for s in seeds.values()])[0] for i in range(n_fixed)]
-        ax.plot(factors, exposure, "o-", color=COLD_COLOR, linewidth=2)
-        ax.set_xlabel("Factor on new videos' vectors")
-        ax.set_ylabel("New-video exposure (%)", color=COLD_COLOR)
-        matched = mean_std([s["lengths"]["matched_factor"] for s in seeds.values()])[0]
-        ax.axvline(matched, color=MUTED, linestyle="--", linewidth=1)
-        ax.text(matched, ax.get_ylim()[1], " lengths matched", color=MUTED, fontsize=8, va="top")
+    shown = {n: curve(s) for n, s in results.items() if s}
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.8), facecolor=SURFACE)
+    panels = (("old", "Old videos", "Recall@10, the old video a user took"),
+              ("new", "New videos", "Recall@10, the new video a user took"))
+    for ax, (key, title, ylabel) in zip(axes, panels):
         style_axis(ax)
-        twin = ax.twinx()
-        twin.plot(factors, warm, "s--", color=WARM_COLOR, linewidth=1.5)
-        twin.set_ylabel("Recall@10 on old videos, among all", color=WARM_COLOR)
-        twin.set_ylim(0, max(warm) * 1.25)
-        for side in ("top", "left", "right"):
-            twin.spines[side].set_visible(False)
-        twin.tick_params(colors=MUTED, length=0, labelsize=9)
-        ax.set_title(names.get(name, name), loc="left", color=INK, fontsize=11)
-    fig.tight_layout()
+        ax.yaxis.grid(True, color="#e4e3df", linewidth=0.8)
+        ax.axvline(10, color=MUTED, linestyle=(0, (4, 3)), linewidth=1, zorder=1)
+        for name, points in shown.items():
+            color = COLORS.get(name, MUTED)
+            xs = [100 * p["exposure"] for p in points]
+            ys = [p[key] for p in points]
+            ax.plot(xs, ys, color=color, linewidth=2, zorder=3, label=names.get(name, name))
+            ax.errorbar(xs, ys, xerr=[100 * p["exposure_std"] for p in points],
+                        yerr=[p[f"{key}_std"] for p in points], fmt="none", ecolor=color, alpha=0.45,
+                        elinewidth=1, capsize=0, zorder=2)
+            for p, x, y in zip(points, xs, ys):
+                if p["label"] == "1":
+                    ax.plot(x, y, "o", markersize=8, markerfacecolor=SURFACE, markeredgecolor=color,
+                            markeredgewidth=2, zorder=5)
+                elif p["label"] == "calibrated":
+                    ax.plot(x, y, "o", markersize=11, color=color, markeredgecolor=SURFACE,
+                            markeredgewidth=2, zorder=6)
+                else:
+                    ax.plot(x, y, "o", markersize=5, color=color, zorder=4)
+        ax.set_xlim(-1, x_max)
+        ax.set_xlabel("New videos' share of top-10 slots (%)")
+        ax.set_ylabel(ylabel)
+        ax.set_title(title, loc="left", color=INK, fontsize=11)
+    for ax, (key, _, _) in zip(axes, panels):
+        low, high = visible_range(shown, key, x_max)
+        pad = 0.15 * (high - low)
+        ax.set_ylim(0 if key == "new" else low - pad, high + pad)
+    top = axes[0].get_ylim()[1]
+    axes[0].text(10.3, top, "new videos' share\nof the catalogue", color=MUTED, fontsize=8, va="top")
+    # Direct labels where the lines leave the left panel, pushed apart where lines end close together.
+    ends = {name: float(np.interp(x_max, [100 * p["exposure"] for p in points], [p["old"] for p in points]))
+            for name, points in shown.items()}
+    low, high = axes[0].get_ylim()
+    for name, y in spread(ends, 0.045 * (high - low)).items():
+        axes[0].annotate(SHORT.get(name, name), (x_max, y), xytext=(4, 0), textcoords="offset points",
+                         va="center", fontsize=8.5, color=INK, annotation_clip=False)
+    blue = shown.get("id_content_dropout_050")
+    if blue:
+        trained = next(p for p in blue if p["label"] == "1")
+        calibrated = next(p for p in blue if p["label"] == "calibrated")
+        arrow = dict(arrowstyle="-", color=MUTED, linewidth=0.8)
+        axes[1].annotate("as trained", (100 * trained["exposure"], trained["new"]), xytext=(-6, 44),
+                         textcoords="offset points", ha="center", fontsize=8, color=MUTED, arrowprops=arrow)
+        axes[1].annotate(f"factor {calibrated['factor']:.2f},\nchosen on validation users",
+                         (100 * calibrated["exposure"], calibrated["new"]), xytext=(-110, 40),
+                         textcoords="offset points", fontsize=8, color=MUTED, arrowprops=arrow)
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper left", bbox_to_anchor=(0.01, 0.935), ncol=len(labels),
+               frameon=False, fontsize=9)
+    fig.suptitle("Give every model the same share of new videos, then compare", x=0.01, ha="left",
+                 color=INK, fontsize=12.5)
+    fig.tight_layout(rect=(0, 0, 0.96, 0.95))
     fig.savefig(path, dpi=160, facecolor=SURFACE)
     plt.close(fig)
 

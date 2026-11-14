@@ -122,6 +122,62 @@ def tradeoff_markdown(points: list[dict]) -> str:
     return "\n".join(lines)
 
 
+# Where a point label may go, in points from the point, in order of preference.
+LABEL_SPOTS = [(6, 5), (6, -12), (-8, 5), (-8, -12), (6, 14), (6, -21)]
+
+
+def curve_spots(bar: float) -> list[tuple[float, float]]:
+    """Straight above or below the point, clear of its error bar (`bar` points each way), so the
+    label cannot be read as belonging to a neighbour on the curve."""
+    return [(0, 7 + bar), (0, -16 - bar)]
+
+
+def sample_lines(lines: list[list[tuple[float, float]]], n: int = 25) -> list[tuple[float, float]]:
+    """Points along each polyline, so labels can keep off lines as well as markers."""
+    out = []
+    for line in lines:
+        for (x0, y0), (x1, y1) in zip(line, line[1:]):
+            out += [(x0 + t * (x1 - x0), y0 + t * (y1 - y0)) for t in np.linspace(0, 1, n)]
+    return out
+
+
+def place_labels(ax, items: list[tuple[str, float, float, dict, list]], lines=()) -> None:
+    """Label points without overlap: each label takes the first of its spots that clears earlier labels,
+    the points and the lines, or the least crowded one if none does.
+
+    items: (text, x, y, text style, spots); lines: polylines to keep clear of. Data units throughout."""
+    fig = ax.figure
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    marks = [ax.transData.transform((x, y)) for _, x, y, _, _ in items]
+    radius = 5 * fig.dpi / 72  # half a marker, in pixels
+    along = [ax.transData.transform(pt) for pt in sample_lines(list(lines))]
+    thin = 1.5 * fig.dpi / 72
+    taken = []
+
+    def clashes(box) -> int:
+        """How many labels, points and line samples the box would cover."""
+        near = lambda pts, r: sum(box.x0 - r < mx < box.x1 + r and box.y0 - r < my < box.y1 + r for mx, my in pts)
+        return sum(box.overlaps(t) for t in taken) + near(marks, radius) + near(along, thin)
+
+    for text, x, y, style, spots in items:
+        best = None
+        for dx, dy in spots:
+            ha = "center" if dx == 0 else "left" if dx > 0 else "right"
+            ann = ax.annotate(text, (x, y), xytext=(dx, dy), textcoords="offset points", ha=ha, **style)
+            box = ann.get_window_extent(renderer)
+            score = clashes(box)
+            if best is None or score < best[0]:
+                if best is not None:
+                    best[1].remove()
+                best = (score, ann, box)
+            else:
+                ann.remove()
+            if score == 0:
+                break
+        taken.append(best[2].padded(4))  # the first clear spot, or the least crowded one; a little air around it
+
+
 def tradeoff_chart(points: list[dict], path: Path) -> None:
     import matplotlib
     matplotlib.use("Agg")
@@ -130,19 +186,16 @@ def tradeoff_chart(points: list[dict], path: Path) -> None:
     curve, corrected, others = classify(points)
     fig, ax = plt.subplots(figsize=(8.5, 5.6), facecolor=SURFACE)
     x = lambda p: 100 * p["exposure"]
+    labels = []
     for p in others:
         ax.scatter(x(p), p["warm"], s=28, color=MUTED, zorder=2)
-        ax.annotate(label(p["name"]), (x(p), p["warm"]), xytext=(5, 4), textcoords="offset points",
-                    fontsize=7.5, color=MUTED)
+        labels.append((label(p["name"]), x(p), p["warm"], dict(fontsize=7.5, color=MUTED), LABEL_SPOTS))
     if curve:
         ax.plot([x(p) for p in curve], [p["warm"] for p in curve], color=WARM_COLOR, linewidth=2, zorder=3)
         ax.errorbar([x(p) for p in curve], [p["warm"] for p in curve],
                     xerr=[100 * (p["exposure_std"] or 0) for p in curve], yerr=[p["warm_std"] or 0 for p in curve],
                     fmt="o", color=WARM_COLOR, ecolor=WARM_COLOR, markersize=6, capsize=2, zorder=4,
                     label="IDs + cover + title, by ID dropout in training")
-        for p in curve:
-            ax.annotate(f"{p['id_dropout']:g}", (x(p), p["warm"]), xytext=(6, 6), textcoords="offset points",
-                        fontsize=9, color=INK)
     for i, (p, base) in enumerate(corrected):
         ax.scatter(x(p), p["warm"], s=70, marker="D", color=COLD_COLOR, zorder=5,
                    label="with popularity correction" if i == 0 else None)
@@ -155,11 +208,20 @@ def tradeoff_chart(points: list[dict], path: Path) -> None:
                  fontsize=12)
     ax.margins(x=0.22)  # room for the point labels on the right
     ax.set_xlim(left=-0.6)
+    if curve:  # room above the curve for its labels
+        ax.set_ylim(top=1.1 * max(p["warm"] + (p["warm_std"] or 0) for p in curve))
     style_axis(ax)
     ax.yaxis.grid(True, color="#e4e3df", linewidth=0.8)
     if curve or corrected:
-        ax.legend(frameon=False, fontsize=9, loc="best")
+        ax.legend(frameon=False, fontsize=9, loc="lower right")
     fig.tight_layout()
+    # Positions are final from here. Curve labels go first, measured against their own error bars.
+    to_points = lambda dy: (ax.transData.transform((0, dy))[1] - ax.transData.transform((0, 0))[1]) * 72 / fig.dpi
+    labels = [(f"{p['id_dropout']:g}", x(p), p["warm"], dict(fontsize=9, color=INK),
+               curve_spots(to_points(p["warm_std"] or 0))) for p in curve] + labels
+    lines = [[(x(p), p["warm"]) for p in curve]]
+    lines += [[(x(base), base["warm"]), (x(p), p["warm"])] for p, base in corrected if base is not None]
+    place_labels(ax, labels, lines)
     fig.savefig(path, dpi=160, facecolor=SURFACE)
     plt.close(fig)
 

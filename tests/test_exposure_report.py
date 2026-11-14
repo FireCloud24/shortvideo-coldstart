@@ -104,3 +104,20 @@ def test_tradeoff_main_writes_changes_against_the_uncorrected_run(tmp_path):
     # warm 0.10 -> 0.09 is -10.0%; exposure 1.00% -> 3.00% is +2.00 points
     assert "| -10.0% |" in text and "| +2.00 |" in text
     assert (tmp_path / "tradeoff.png").stat().st_size > 0
+
+
+def test_tradeoff_labels_do_not_overlap(tmp_path):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=(4, 3))
+    pts = [(0.0, 0.100), (0.7, 0.101), (1.1, 0.102), (5.4, 0.090), (5.5, 0.088)]
+    ax.plot(*zip(*pts), "o")
+    items = [(f"label {i}", x, y, dict(fontsize=8), tradeoff.LABEL_SPOTS) for i, (x, y) in enumerate(pts)]
+    tradeoff.place_labels(ax, items)
+    fig.canvas.draw()
+    boxes = [t.get_window_extent() for t in ax.texts]
+    assert len(boxes) == len(pts)
+    assert not any(a.overlaps(b) for i, a in enumerate(boxes) for b in boxes[i + 1:])
+    plt.close(fig)

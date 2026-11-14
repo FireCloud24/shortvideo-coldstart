@@ -81,3 +81,38 @@ def test_exposure_rises_with_the_factor_and_like_for_like_table(tmp_path):
     # Results saved before calibration existed are still reported, without the comparison table.
     old = {"m": {"0": {"lengths": seed["lengths"], "rows": rows[:1]}}}
     assert "## Like for like" not in scale_test.markdown(old, {"m": "A model"})
+
+
+def fake_seed(factors_and_rows):
+    rows = [{"label": label, "factor": f, "exposure": {"cold_slot_share": e},
+             "cold_all": {"recall@10": new}, "warm_all": {"recall@10": old}}
+            for label, f, e, new, old in factors_and_rows]
+    return {"lengths": {"matched_factor": 1.3}, "rows": rows, "calibration": {"target_exposure": 0.1, "factor": 1.1}}
+
+
+def test_curve_orders_by_factor_and_leaves_out_matched():
+    seeds = {"0": fake_seed([("1", 1.0, 0.02, 0.01, 0.10), ("2", 2.0, 0.50, 0.05, 0.05),
+                             ("matched", 1.3, 0.20, 0.03, 0.08), ("calibrated", 1.1, 0.10, 0.02, 0.09)]),
+             "1": fake_seed([("1", 1.0, 0.04, 0.01, 0.12), ("2", 2.0, 0.50, 0.05, 0.05),
+                             ("matched", 1.4, 0.30, 0.03, 0.08), ("calibrated", 1.2, 0.10, 0.02, 0.09)])}
+    points = scale_test.curve(seeds)
+    assert [p["label"] for p in points] == ["1", "calibrated", "2"]
+    first = points[0]
+    assert abs(first["exposure"] - 0.03) < 1e-12 and abs(first["old"] - 0.11) < 1e-12 and first["old_std"] > 0
+    assert abs(points[1]["factor"] - 1.15) < 1e-12 and points[2]["new_std"] == 0.0
+
+
+def test_end_labels_are_pushed_apart_only_when_they_collide():
+    out = scale_test.spread({"a": 1.00, "b": 1.01, "c": 2.0}, gap=0.1)
+    assert abs(out["b"] - out["a"] - 0.1) < 1e-12 and abs((out["a"] + out["b"]) / 2 - 1.005) < 1e-12
+    assert out["c"] == 2.0
+
+
+def test_same_exposure_chart_is_written(tmp_path):
+    seed = fake_seed([("1", 1.0, 0.02, 0.01, 0.10), ("calibrated", 1.1, 0.10, 0.02, 0.09),
+                      ("1.5", 1.5, 0.40, 0.04, 0.06)])
+    results = {"id_content_dropout_050": {"0": seed}, "id_content_dropout_100": {"0": seed}, "empty": {}}
+    low, high = scale_test.visible_range({n: scale_test.curve(s) for n, s in results.items() if s}, "old", 25.0)
+    assert low < 0.09 < high <= 0.10  # the line's value where it leaves the plot counts, 0.06 does not
+    scale_test.chart(results, scale_test.NAMES, tmp_path / "chart.png")
+    assert (tmp_path / "chart.png").stat().st_size > 0
